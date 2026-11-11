@@ -10,9 +10,13 @@ from .company_scorer import enrich_scope, score_company
 BING_URL = "https://www.bing.com/search?q={q}&setlang=zh-CN&count=20"
 SO_GOU_URL = "https://www.sogou.com/web?query={q}"
 SO_360_URL = "https://www.so.com/s?q={q}"
+DDG_URL = "https://html.duckduckgo.com/html/?q={q}"
 # 过滤掉明显无关的结果（含搜索引擎降级时的通用填充页）
 NEGATIVE_WORDS = ("招聘", "求职", "试题", "培训广告", "下载", "课件",
-                  "旅游攻略", "旅游景点", "自由行", "百度百科", "酒店")
+                  "旅游攻略", "旅游景点", "自由行", "百度百科", "酒店",
+                  # 查询回显页 / 教程文档，不是企业实体
+                  "怎样注册", "注册流程", "注册材料", "注册条件", "360地图",
+                  "短视频", "文档")
 
 # Bing 结果块: <li class="b_algo"><h2><a href="...">标题</a></h2> ... <p>摘要</p>
 RESULT_RE = re.compile(
@@ -27,6 +31,15 @@ _SOGOU_SNIPPET_RE = re.compile(r'<(?:p|div)[^>]*class="[^"]*(?:fz-mid|text-layou
 # 搜索引擎被限流时返回的通用填充页特征
 _JUNK_HINTS = ("百度百科", "旅游攻略", "Tripadvisor", "上海市人民政府",
                "旅游景点", "自由行", "旅行指南")
+
+# 明显无业务价值的域名：文档分享站、短视频聚合、百科问答
+JUNK_DOMAINS = ("tv.360kan.com", "360kan.com", "renrendoc.com", "docin.com",
+                "wenku.baidu.com", "baike.baidu.com", "zhidao.baidu.com",
+                "douyin.com", "kuaishou.com", "xiaohongshu.com", "zhihu.com/question")
+
+
+def _is_junk_url(url: str) -> bool:
+    return any(d in url for d in JUNK_DOMAINS)
 
 
 def _parse_sogou(html_text: str) -> list[dict]:
@@ -64,53 +77,110 @@ def _parse_360(html_text: str) -> list[dict]:
     return results
 
 
-def _looks_degraded(res: list[dict]) -> bool:
-    """判断结果是否为搜索引擎降级时的通用填充页"""
-    if len(res) < 3:
+def _parse_ddg(html_text: str) -> list[dict]:
+    """解析 DuckDuckGo HTML 版结果页（海外机房 IP 更稳定）"""
+    results = []
+    blocks = re.split(r'(?=<div class="result results_links)', html_text)
+    for block in blocks:
+        m = re.search(r'class="result__a"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)</a>', block)
+        if not m:
+            continue
+        url = _html.unescape(m.group(1)).strip()
+        # DDG 有时用跳转链接 //duckduckgo.com/l/?uddg=<encoded>
+        if "uddg=" in url:
+            from urllib.parse import unquote, urlparse, parse_qs
+
+            qs = parse_qs(urlparse(url if url.startswith("http") else "https:" + url).query)
+            url = unquote(qs.get("uddg", [url])[0])
+        title = strip_tags(m.group(2)).strip()
+        if not title or len(title) < 8 or url.startswith(("javascript:", "#")):
+            continue
+        snippet = ""
+        sm = re.search(r'class="result__snippet"[^>]*>([\s\S]*?)</a>', block)
+        if sm:
+            snippet = strip_tags(sm.group(1))[:200]
+        results.append({"title": title, "url": url, "snippet": snippet, "date": ""})
+    return results
+
+
+GENERIC_TOKENS = {"上海", "2026", "2025", "公司", "最新", "报名", "公告", "信息"}
+SCORE_THRESHOLD = 0.18  # 结果与查询词的 2-gram 覆盖率低于此值视为降级页
+
+
+def _query_grams(q: str) -> set[str]:
+    """把查询词切成有区分度的 2-gram（剔除城市/年份等通用词，避免误判）"""
+    toks = [t for t in re.split(r"[\s，,、/]+", q)
+            if len(t) >= 2 and t not in GENERIC_TOKENS]
+    grams: set[str] = set()
+    for t in toks:
+        grams.update(t[i:i + 2] for i in range(len(t) - 1))
+    return grams
+
+
+def _looks_degraded(res: list[dict], q: str = "") -> bool:
+    """判断结果是否为搜索引擎降级时的通用填充页。
+
+    降级页的典型特征：结果条数少、或内容与查询词完全无关（如查"临港产业规划"
+    却返回"上海旅游"）。因此除了垃圾词比例，还要看查询词 2-gram 覆盖率。
+    """
+    if not res:
         return True
     junk = sum(1 for r in res if any(h in r["title"] for h in _JUNK_HINTS))
-    return junk / len(res) > 0.4
+    if junk / len(res) > 0.5:
+        return True
+    grams = _query_grams(q)
+    if not grams:
+        return len(res) < 3
+    best = 0.0
+    for r in res:
+        text = r["title"] + " " + r.get("snippet", "")
+        best = max(best, sum(1 for g in grams if g in text) / len(grams))
+    return best < SCORE_THRESHOLD
 
 
 # 引擎轮换起点：每次查询换一个引擎，分散反爬压力
 # 注：_parse_bing 定义在本文件后部，这里用名称引用避免前向依赖
 _engine_idx = 0
-_degraded_until = 0.0  # 全部引擎降级后的全局冷却截止时间（monotonic 秒）
+_engine_down: dict[str, float] = {}  # 引擎名 -> 冷却截止时间（monotonic 秒）
+ENGINE_DOWN_SEC = 240  # 单个引擎降级后冷却时长
 
 
 def _engines() -> tuple:
     return (("sogou", SO_GOU_URL, _parse_sogou),
             ("so360", SO_360_URL, _parse_360),
-            ("bing", BING_URL, _parse_bing))
+            ("bing", BING_URL, _parse_bing),
+            ("ddg", DDG_URL, _parse_ddg))
 
 
-def web_search(q: str, count: int = 12, cooldown: int = 30) -> list[dict]:
-    """统一搜索入口：sogou/360/bing 三引擎轮换，降级页自动冷却后换引擎重试。
+def web_search(q: str, count: int = 12, cooldown: int | None = None) -> list[dict]:
+    """统一搜索入口：多引擎轮换，单个引擎降级只冷却自己，不影响其他引擎。
 
-    搜索引擎对高频查询会返回通用填充页（结果与查询词无关），通过特征检测
-    识别降级页，冷却 cooldown 秒后切换引擎重试。
+    与旧实现的关键差异：不再因为某条查询失败就全局封锁；每个引擎独立记冷却，
+    全部引擎都在冷却时才快速失败（不 sleep），从而避免拖垮整次运行。
     """
-    global _engine_idx, _degraded_until
-    if time.monotonic() < _degraded_until:
-        raise RuntimeError("搜索引擎处于全局冷却期，跳过本次查询")
+    global _engine_idx
     engines = _engines()
+    now = time.monotonic()
     last_err: Exception | None = None
     for i in range(len(engines)):
-        name, tpl, parser = engines[(_engine_idx + i) % len(engines)]
+        idx = (_engine_idx + i) % len(engines)
+        name, tpl, parser = engines[idx]
+        if _engine_down.get(name, 0) > now:
+            continue
         try:
-            time.sleep(4)  # 查询间隔，降低触发反爬的概率
+            time.sleep(1.2)  # 轻量间隔，避免瞬时连打
             res = parser(http_get(tpl.format(q=quote(q))))
-            if _looks_degraded(res):
+            res = [r for r in res if not _is_junk_url(r["url"])]
+            if _looks_degraded(res, q):
+                _engine_down[name] = time.monotonic() + ENGINE_DOWN_SEC
                 last_err = RuntimeError(f"{name} 返回降级结果")
-                time.sleep(cooldown)  # 冷却后再换引擎
                 continue
-            _engine_idx = (_engine_idx + i + 1) % len(engines)
+            _engine_idx = (idx + 1) % len(engines)  # 成功的引擎下次优先换下一个
             return res[:count]
         except Exception as e:  # noqa: BLE001
+            _engine_down[name] = time.monotonic() + ENGINE_DOWN_SEC
             last_err = e
-    # 全部引擎降级/失败：进入全局冷却期，后续查询快速失败不再拖慢运行
-    _degraded_until = time.monotonic() + 180
-    raise RuntimeError(f"所有搜索引擎均失败或被降级服务（最后错误: {last_err})")
+    raise RuntimeError(f"所有搜索引擎均不可用或被降级（最后错误: {last_err}）")
 
 
 def collect_new_companies(cfg: dict) -> tuple[list[dict], list[dict]]:

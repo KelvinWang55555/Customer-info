@@ -1,20 +1,49 @@
 {
   "_说明": "每日数据源与关键词配置。修改后推送到 GitHub 即生效，无需改代码。",
-
   "gov_notices": [
-    { "name": "上海市经信委·公示公告", "url": "https://sheitc.sh.gov.cn/gg/index.html", "enabled": true },
-    { "name": "上海市经信委·专项资金通知", "url": "https://www.sheitc.sh.gov.cn/zxzjtzgg/index.html", "enabled": true },
-    { "name": "上海市经信委·产业发展", "url": "https://sheitc.sh.gov.cn/cyfz/index.html", "enabled": true },
-    { "name": "上海市发改委（不可达时自动跳过）", "url": "https://sfgw.sh.gov.cn/", "enabled": true },
-    { "name": "上海市企业服务云（不可达时自动跳过）", "url": "https://www.sme.sh.gov.cn/", "enabled": true }
+    {
+      "name": "上海市经信委·公示公告",
+      "url": "https://sheitc.sh.gov.cn/gg/index.html",
+      "enabled": true
+    },
+    {
+      "name": "上海市经信委·专项资金通知",
+      "url": "https://www.sheitc.sh.gov.cn/zxzjtzgg/index.html",
+      "enabled": true
+    },
+    {
+      "name": "上海市经信委·产业发展",
+      "url": "https://sheitc.sh.gov.cn/cyfz/index.html",
+      "enabled": true
+    },
+    {
+      "name": "上海市发改委（不可达时自动跳过）",
+      "url": "https://sfgw.sh.gov.cn/",
+      "enabled": true
+    },
+    {
+      "name": "上海市企业服务云（不可达时自动跳过）",
+      "url": "https://www.sme.sh.gov.cn/",
+      "enabled": true
+    }
   ],
-
   "automation_keywords": [
-    "自动化", "智能制造", "智能工厂", "智能装备", "机器人",
-    "工业互联网", "数控", "传感器", "PLC", "变频", "伺服",
-    "数字化转型", "智能网联", "具身智能", "工业软件"
+    "自动化",
+    "智能制造",
+    "智能工厂",
+    "智能装备",
+    "机器人",
+    "工业互联网",
+    "数控",
+    "传感器",
+    "PLC",
+    "变频",
+    "伺服",
+    "数字化转型",
+    "智能网联",
+    "具身智能",
+    "工业软件"
   ],
-
   "search_companies": {
     "enabled": true,
     "queries": [
@@ -23,14 +52,23 @@
       "上海 机器人科技 公司 注册 成立",
       "上海 工业自动化 新设 公司 登记"
     ],
-    "filter_keywords": ["自动化", "智能装备", "机器人", "机电", "数控", "智能科技", "电气", "仪器仪表", "机械设备"],
+    "filter_keywords": [
+      "自动化",
+      "智能装备",
+      "机器人",
+      "机电",
+      "数控",
+      "智能科技",
+      "电气",
+      "仪器仪表",
+      "机械设备"
+    ],
     "scorer": {
       "enrich": true,
       "enrich_top": 5,
       "_说明": "enrich=true 时对前5条做『公司名+经营范围』二次检索后重新评分；keywords 留空则用代码内置三级加权词库（核心业务×3 / 系统集成×2 / 邻近行业×1）"
     }
   },
-
   "qcc_api": {
     "enabled": true,
     "area": "上海",
@@ -38,14 +76,20 @@
     "search_type": "searchWide",
     "_说明": "拿到企查查账号后配置 GitHub Secrets: QCC_API_KEY / QCC_SECRET_KEY，届时可拿到经营范围等结构化数据，评分会更准"
   },
-
   "tenders": {
     "enabled": true,
     "sources": [
       {
         "name": "中国政府采购网",
         "type": "ccgp_search",
-        "queries": ["自动化", "工业机器人", "PLC 伺服", "智能制造", "数控机床", "传感器"],
+        "queries": [
+          "自动化",
+          "工业机器人",
+          "PLC 伺服",
+          "智能制造",
+          "数控机床",
+          "传感器"
+        ],
         "days": 2
       },
       {
@@ -58,12 +102,34 @@
         ]
       }
     ],
-    "filter_keywords": ["自动化", "机器人", "智能", "数控", "PLC", "伺服", "变频", "传感器", "生产线", "机电", "智能制造"],
-    "exclude_keywords": ["废标", "流标", "终止", "更正公告", "短视频", "在线观看", "文库", "图片大全"],
-    "prefer_regions": ["上海"],
+    "filter_keywords": [
+      "自动化",
+      "机器人",
+      "智能",
+      "数控",
+      "PLC",
+      "伺服",
+      "变频",
+      "传感器",
+      "生产线",
+      "机电",
+      "智能制造"
+    ],
+    "exclude_keywords": [
+      "废标",
+      "流标",
+      "终止",
+      "更正公告",
+      "短视频",
+      "在线观看",
+      "文库",
+      "图片大全"
+    ],
+    "prefer_regions": [
+      "上海"
+    ],
     "max_items": 25
   },
-
   "signals": {
     "enabled": true,
     "_说明": "产业园区动态 / 展会会议沙龙 / 区域政府规划。查询词与过滤词可按需增删。",
@@ -75,8 +141,23 @@
           "上海 工业园区 招商 机器人 自动化",
           "上海 智能制造产业园 入驻 企业"
         ],
-        "filter_keywords": ["产业园", "工业园区", "园区", "开园", "招商", "入驻"],
-        "exclude_keywords": ["厂房出租", "仓库出租", "写字楼", "招租", "出租", "招商电话", "招租电话"]
+        "filter_keywords": [
+          "产业园",
+          "工业园区",
+          "园区",
+          "开园",
+          "招商",
+          "入驻"
+        ],
+        "exclude_keywords": [
+          "厂房出租",
+          "仓库出租",
+          "写字楼",
+          "招租",
+          "出租",
+          "招商电话",
+          "招租电话"
+        ]
       },
       {
         "name": "展会会议沙龙",
@@ -85,7 +166,15 @@
           "上海 工业博览会 智能制造 展会",
           "上海 机器人 峰会 论坛 沙龙"
         ],
-        "filter_keywords": ["展会", "博览会", "峰会", "论坛", "沙龙", "研讨会", "工博会"],
+        "filter_keywords": [
+          "展会",
+          "博览会",
+          "峰会",
+          "论坛",
+          "沙龙",
+          "研讨会",
+          "工博会"
+        ],
         "exclude_keywords": []
       },
       {
@@ -95,15 +184,23 @@
           "上海 十五五 规划 机器人 自动化产业",
           "上海 临港 张江 嘉定 产业规划 自动化"
         ],
-        "filter_keywords": ["规划", "产业布局", "行动计划", "实施方案", "十五五", "十四五", "产业政策"],
+        "filter_keywords": [
+          "规划",
+          "产业布局",
+          "行动计划",
+          "实施方案",
+          "十五五",
+          "十四五",
+          "产业政策"
+        ],
         "exclude_keywords": []
       }
     ]
   },
-
   "report": {
     "push_empty": true,
     "max_push_chars": 3800,
-    "report_dir": "reports"
+    "report_dir": "reports",
+    "resolve_redirects": 60
   }
 }

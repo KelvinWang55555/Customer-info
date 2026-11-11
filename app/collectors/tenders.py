@@ -29,6 +29,8 @@ def _collect_ccgp(source: dict, keywords: list[str]) -> tuple[list[dict], str]:
     start, end = _date_range(int(source.get("days", 2)))
     items: list[dict] = []
     errors: list[str] = []
+    total_links = 0  # 解析出的结果链接总数，用于识别反爬空页
+    blocked = 0
     for kw in source.get("queries", []):
         url = CCGP_URL.format(kw=quote(kw), start=start, end=end)
         try:
@@ -36,8 +38,15 @@ def _collect_ccgp(source: dict, keywords: list[str]) -> tuple[list[dict], str]:
         except Exception as e:  # noqa: BLE001
             errors.append(f"{kw}: {type(e).__name__}")
             continue
+        if "频繁访问" in html or "验证码" in html:
+            blocked += 1
+            errors.append(f"{kw}: 被反爬拦截")
+            continue
         n0 = len(items)
+        n_links = 0
         for href, text in _iter_ccgp_links(html, url):
+            n_links += 1
+            total_links += 1
             title = strip_tags(text)
             if not title or not match_any(title, keywords):
                 continue
@@ -50,8 +59,10 @@ def _collect_ccgp(source: dict, keywords: list[str]) -> tuple[list[dict], str]:
             })
         if len(items) == n0:  # 该关键词无结果也记录
             errors.append(f"{kw}: 0条")
-    if not items and errors and all("0条" not in e for e in errors):
-        raise RuntimeError("全部关键词失败: " + "; ".join(errors))
+    if not items and blocked:
+        raise RuntimeError(f"疑似反爬（{blocked}个关键词被拦截），建议降低频率或改用 API")
+    if not items and total_links == 0:
+        raise RuntimeError("页面无结果链接（可能被反爬或页面改版），已跳过")
     return items, f"{len(source.get('queries', []))}个关键词, 命中{len(items)}条"
 
 

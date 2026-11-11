@@ -50,6 +50,39 @@ def http_post_json(url: str, payload: dict, timeout: int = 15) -> dict:
         return json.loads(resp.read().decode("utf-8", errors="replace"))
 
 
+# 搜索引擎的跳转链接域名特征（真实地址被加密，只能跟一次重定向解出来）
+_REDIRECT_HINTS = ("so.com/link", "sogou.com/link", "baidu.com/link")
+# 跳转页里真实地址的常见写法（360/搜狗用 JS 或 meta refresh 跳转）
+_REDIRECT_BODY_PATTERNS = (
+    re.compile(r'window\.location\.replace\(\s*["\']([^"\']+)["\']'),
+    re.compile(r'window\.location(?:\.href)?\s*=\s*["\']([^"\']+)["\']'),
+    re.compile(r'URL\s*=\s*["\']([^"\']+)["\']', re.I),
+)
+
+
+def resolve_redirect(url: str, timeout: int = 8) -> str:
+    """把搜索引擎跳转链接解析成真实 URL；失败或非跳转链接原样返回。"""
+    if not any(h in url for h in _REDIRECT_HINTS):
+        return url
+    target = url
+    try:
+        req = urllib.request.Request(url, headers=HEADERS)
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            final = resp.url
+            body = resp.read(4096).decode("utf-8", errors="replace")
+        if final and not any(h in final for h in _REDIRECT_HINTS):
+            target = final
+        else:
+            for pat in _REDIRECT_BODY_PATTERNS:
+                m = pat.search(body)
+                if m:
+                    target = m.group(1).replace("\\/", "/")
+                    break
+    except Exception:  # noqa: BLE001
+        return url
+    return target if target.startswith("http") else url
+
+
 def extract_date(url: str, text: str) -> str:
     """优先从 URL 路径取 YYYYMMDD，其次从周边文本取日期，返回 YYYY-MM-DD 或空"""
     m = DATE_IN_URL.search(url)

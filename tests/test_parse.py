@@ -67,6 +67,17 @@ def main():
         {"scorer": {"enrich": False}})
     assert [s["title"] for s in scored] == ["甲自动化设备"], "评分过滤/排序异常"
 
+    # 5. 搜索引擎降级页识别（查询词 2-gram 覆盖率）
+    from app.collectors.search_companies import _looks_degraded
+
+    travel = [{"title": "上海旅游攻略_必去景点推荐", "snippet": "东方明珠 外滩", "url": "u1"},
+              {"title": "上海自由行攻略2026", "snippet": "酒店 美食", "url": "u2"}]
+    assert _looks_degraded(travel, "上海 临港 产业规划"), "通用填充页应判为降级"
+    relevant = [{"title": "临港新片区发布产业规划 打造千亿级产业集群",
+                 "snippet": "智能制造业布局", "url": "u3"}]
+    assert not _looks_degraded(relevant, "上海 临港 产业规划"), "相关结果不应误判为降级"
+    assert _looks_degraded([], "任意查询"), "空结果应判为降级"
+
     # 5. 报告生成（含招标板块与评级展示）
     report = build_report(
         [{"source": "s", "title": "测试公告" * 2, "url": "https://a.com", "date": "2026-11-10"}],

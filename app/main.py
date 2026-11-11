@@ -17,7 +17,7 @@ from .collectors.search_companies import apply_scoring, collect_new_companies
 from .collectors.tenders import collect_tenders
 from .push_wecom import push_report
 from .report import build_report
-from .util import today
+from .util import resolve_redirect, today
 
 ROOT = Path(__file__).resolve().parent.parent
 CONFIG_FILE = ROOT / "config" / "sources.json"
@@ -92,6 +92,29 @@ def main() -> int:
         for it in projects + companies + tenders + signals:
             seen.add(key_of(it))
         save_state(seen)
+
+    # 搜索引擎给的是加密跳转链接，解析成真实地址（只处理入选条目并限量，避免拖慢）
+    budget = int(cfg.get("report", {}).get("resolve_redirects", 60))
+    for it in new_tenders + new_signals + new_companies + new_projects:
+        if budget <= 0:
+            break
+        url = it.get("url") or ""
+        if url:
+            resolved = resolve_redirect(url)
+            if resolved != url:
+                it["url"] = resolved
+                budget -= 1
+
+    # 解析后才知道真实域名，这里二次过滤文档站/视频站等无价值来源
+    from .collectors.search_companies import _is_junk_url
+
+    def drop_junk(items: list[dict]) -> list[dict]:
+        return [it for it in items if not _is_junk_url(it.get("url") or "")]
+
+    new_projects = drop_junk(new_projects)
+    new_companies = drop_junk(new_companies)
+    new_tenders = drop_junk(new_tenders)
+    new_signals = drop_junk(new_signals)
 
     # ---------- 3. 生成报告 ----------
     report = build_report(new_projects, new_companies, health, new_tenders, new_signals)
