@@ -75,6 +75,7 @@ def _looks_degraded(res: list[dict]) -> bool:
 # 引擎轮换起点：每次查询换一个引擎，分散反爬压力
 # 注：_parse_bing 定义在本文件后部，这里用名称引用避免前向依赖
 _engine_idx = 0
+_degraded_until = 0.0  # 全部引擎降级后的全局冷却截止时间（monotonic 秒）
 
 
 def _engines() -> tuple:
@@ -89,7 +90,9 @@ def web_search(q: str, count: int = 12, cooldown: int = 30) -> list[dict]:
     搜索引擎对高频查询会返回通用填充页（结果与查询词无关），通过特征检测
     识别降级页，冷却 cooldown 秒后切换引擎重试。
     """
-    global _engine_idx
+    global _engine_idx, _degraded_until
+    if time.monotonic() < _degraded_until:
+        raise RuntimeError("搜索引擎处于全局冷却期，跳过本次查询")
     engines = _engines()
     last_err: Exception | None = None
     for i in range(len(engines)):
@@ -105,6 +108,8 @@ def web_search(q: str, count: int = 12, cooldown: int = 30) -> list[dict]:
             return res[:count]
         except Exception as e:  # noqa: BLE001
             last_err = e
+    # 全部引擎降级/失败：进入全局冷却期，后续查询快速失败不再拖慢运行
+    _degraded_until = time.monotonic() + 180
     raise RuntimeError(f"所有搜索引擎均失败或被降级服务（最后错误: {last_err})")
 
 
