@@ -19,11 +19,15 @@
 
 单板块失败不中断，健康状态如实上报。
 """
+from datetime import date, timedelta
+
 from ..util import extract_date, match_any
 from .search_companies import NEGATIVE_WORDS, _query_grams, web_search
 
 # 单条结果与查询词的 2-gram 覆盖率下限（查询词已编码板块意图，足够相关就收）
 QUERY_RELEVANCE_MIN = 0.34
+# 产业动态只关心近期：内容日期早于 N 天的一律丢弃
+MAX_AGE_DAYS = 365
 
 
 def _relevant(text: str, keywords: list[str], q: str) -> bool:
@@ -49,14 +53,18 @@ def _collect_category(cat: dict) -> tuple[list[dict], str]:
             errors.append(f"{type(e).__name__}")
             continue
         n0 = len(items)
+        cutoff = (date.today() - timedelta(days=MAX_AGE_DAYS)).isoformat()
         for it in got:
             text = it["title"] + " " + it.get("snippet", "")
             if not _relevant(text, keywords, q):
                 continue
             if any(n in text for n in NEGATIVE_WORDS) or any(x in text for x in exclude):
                 continue
+            d = extract_date(it["url"], it.get("snippet", ""))
+            if d and d < cutoff:  # 旧闻（如 2024 年的开园报道）直接丢
+                continue
             it["source"] = f"{cat.get('name', '?')}·搜索"
-            it["date"] = extract_date(it["url"], it.get("snippet", ""))
+            it["date"] = d
             items.append(it)
         if len(items) == n0:
             errors.append("0条")

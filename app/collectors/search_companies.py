@@ -36,14 +36,19 @@ _JUNK_HINTS = ("百度百科", "旅游攻略", "Tripadvisor", "上海市人民�
 JUNK_DOMAINS = ("tv.360kan.com", "360kan.com", "renrendoc.com", "docin.com",
                 "wenku.baidu.com", "baike.baidu.com", "zhidao.baidu.com",
                 "douyin.com", "kuaishou.com", "xiaohongshu.com", "zhihu.com/question",
-                "book118.com", "doc88.com", "360doc.com", "mbalib.com", "docin.com")
+                "book118.com", "doc88.com", "360doc.com", "mbalib.com",
+                "toutiao.com/topic", "baike.sogou.com")
 
 # 过时内容：标题里出现多年前份的公告/教程，对新客户线索和产业动态没价值
 _STALE_YEARS = ("2018年", "2019年", "2020年", "2021年", "2022年", "2023年", "2024年")
+# URL 路径里的年份（如 /2024/09/02/），用于判断旧文章
+_STALE_URL_YEAR = re.compile(r"/(201[5-9]|202[0-4])[/_-]")
 
 
-def _is_stale(title: str) -> bool:
-    return any(y in title for y in _STALE_YEARS)
+def _is_stale(title: str, url: str = "") -> bool:
+    if any(y in title for y in _STALE_YEARS):
+        return True
+    return bool(url and _STALE_URL_YEAR.search(url))
 
 
 def _is_junk_url(url: str) -> bool:
@@ -193,7 +198,8 @@ def web_search(q: str, count: int = 12, retry_wait: bool = True) -> list[dict]:
             try:
                 time.sleep(QUERY_GAP_SEC if i == 0 else 1.2)
                 res = parser(http_get(tpl.format(q=quote(q)), timeout=12))
-                res = [r for r in res if not _is_junk_url(r["url"]) and not _is_stale(r["title"])]
+                res = [r for r in res if not _is_junk_url(r["url"])
+                       and not _is_stale(r["title"], r["url"])]
                 if _looks_degraded(res, q):
                     _engine_down[name] = time.monotonic() + ENGINE_DOWN_SEC
                     last_err = RuntimeError(f"{name} 返回降级结果")
