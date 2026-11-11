@@ -1,0 +1,43 @@
+name: daily-sh-automation-report
+
+on:
+  schedule:
+    # UTC 00:30 = 北京时间 08:30，每天早上自动运行
+    - cron: '30 0 * * *'
+  workflow_dispatch: {}   # 支持手动在 Actions 页面触发
+
+permissions:
+  contents: write
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: 运行采集与推送
+        # 项目为纯标准库实现，无需安装任何依赖
+        env:
+          SERVERCHAN_SENDKEY: ${{ secrets.SERVERCHAN_SENDKEY }}
+          PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
+          WECOM_WEBHOOK: ${{ secrets.WECOM_WEBHOOK }}
+          QCC_API_KEY: ${{ secrets.QCC_API_KEY }}
+          QCC_SECRET_KEY: ${{ secrets.QCC_SECRET_KEY }}
+        run: python -m app.main
+
+      - name: 提交去重状态与报告
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add state/ reports/
+          if git diff --cached --quiet; then
+            echo "无状态变更，跳过提交"
+          else
+            git commit -m "chore: 每日状态更新 [skip ci]"
+            git push
+          fi

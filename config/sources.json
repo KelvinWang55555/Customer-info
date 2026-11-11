@@ -1,0 +1,41 @@
+{
+  "_说明": "每日数据源与关键词配置。修改后推送到 GitHub 即生效，无需改代码。",
+
+  "gov_notices": [
+    { "name": "上海市经信委·公示公告", "url": "https://sheitc.sh.gov.cn/gg/index.html", "enabled": true },
+    { "name": "上海市经信委·专项资金通知", "url": "https://www.sheitc.sh.gov.cn/zxzjtzgg/index.html", "enabled": true },
+    { "name": "上海市经信委·产业发展", "url": "https://sheitc.sh.gov.cn/cyfz/index.html", "enabled": true },
+    { "name": "上海市发改委（不可达时自动跳过）", "url": "https://sfgw.sh.gov.cn/", "enabled": true },
+    { "name": "上海市企业服务云（不可达时自动跳过）", "url": "https://www.sme.sh.gov.cn/", "enabled": true }
+  ],
+
+  "automation_keywords": [
+    "自动化", "智能制造", "智能工厂", "智能装备", "机器人",
+    "工业互联网", "数控", "传感器", "PLC", "变频", "伺服",
+    "数字化转型", "智能网联", "具身智能", "工业软件"
+  ],
+
+  "search_companies": {
+    "enabled": true,
+    "queries": [
+      "上海 新注册 自动化科技有限公司",
+      "上海 自动化设备 公司 成立 工商注册",
+      "上海 注册 智能装备 自动化 新公司"
+    ],
+    "filter_keywords": ["自动化", "智能装备", "机器人", "机电", "数控", "智能科技"]
+  },
+
+  "qcc_api": {
+    "enabled": true,
+    "area": "上海",
+    "keywords": "自动化",
+    "search_type": "searchWide",
+    "_说明": "拿到企查查账号后配置 GitHub Secrets: QCC_API_KEY / QCC_SECRET_KEY"
+  },
+
+  "report": {
+    "push_empty": true,
+    "max_push_chars": 3800,
+    "report_dir": "reports"
+  }
+}
