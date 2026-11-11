@@ -1,4 +1,6 @@
 """通用工具：HTTP 请求（纯标准库）、日期提取、关键词匹配"""
+import base64
+import html as _html
 import json
 import re
 import urllib.request
@@ -51,7 +53,7 @@ def http_post_json(url: str, payload: dict, timeout: int = 15) -> dict:
 
 
 # 搜索引擎的跳转链接域名特征（真实地址被加密，只能跟一次重定向解出来）
-_REDIRECT_HINTS = ("so.com/link", "sogou.com/link", "baidu.com/link")
+_REDIRECT_HINTS = ("so.com/link", "sogou.com/link", "baidu.com/link", "bing.com/ck/a")
 # 跳转页里真实地址的常见写法（360/搜狗用 JS 或 meta refresh 跳转）
 _REDIRECT_BODY_PATTERNS = (
     re.compile(r'window\.location\.replace\(\s*["\']([^"\']+)["\']'),
@@ -60,10 +62,29 @@ _REDIRECT_BODY_PATTERNS = (
 )
 
 
+def _decode_bing_link(url: str) -> str:
+    """Bing 的 ck/a 跳转把目标地址放在 u=a1<base64url> 里，可直接解码"""
+    try:
+        from urllib.parse import parse_qs, unquote, urlparse
+
+        u = parse_qs(urlparse(_html.unescape(url)).query).get("u", [""])[0]
+        if u.startswith("a1"):
+            raw = u[2:]
+            raw += "=" * (-len(raw) % 4)
+            return base64.urlsafe_b64decode(raw).decode("utf-8", "replace")
+        return unquote(u)
+    except Exception:  # noqa: BLE001
+        return ""
+
+
 def resolve_redirect(url: str, timeout: int = 8) -> str:
     """把搜索引擎跳转链接解析成真实 URL；失败或非跳转链接原样返回。"""
     if not any(h in url for h in _REDIRECT_HINTS):
         return url
+    if "bing.com/ck/a" in url:
+        decoded = _decode_bing_link(url)
+        if decoded.startswith("http"):
+            return decoded
     target = url
     try:
         req = urllib.request.Request(url, headers=HEADERS)
