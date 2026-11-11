@@ -142,7 +142,8 @@ def _looks_degraded(res: list[dict], q: str = "") -> bool:
 # 注：_parse_bing 定义在本文件后部，这里用名称引用避免前向依赖
 _engine_idx = 0
 _engine_down: dict[str, float] = {}  # 引擎名 -> 冷却截止时间（monotonic 秒）
-ENGINE_DOWN_SEC = 240  # 单个引擎降级后冷却时长
+ENGINE_DOWN_SEC = 45   # 单引擎失败后的冷却时长（要短于整次运行，否则后半段全被跳过）
+QUERY_GAP_SEC = 3.5    # 查询间隔，降低触发反爬概率
 
 
 def _engines() -> tuple:
@@ -152,34 +153,43 @@ def _engines() -> tuple:
             ("ddg", DDG_URL, _parse_ddg))
 
 
-def web_search(q: str, count: int = 12, cooldown: int | None = None) -> list[dict]:
-    """统一搜索入口：多引擎轮换，单个引擎降级只冷却自己，不影响其他引擎。
+def web_search(q: str, count: int = 12, retry_wait: bool = True) -> list[dict]:
+    """统一搜索入口：多引擎轮换，单引擎降级只冷却自己，不影响其他引擎。
 
-    与旧实现的关键差异：不再因为某条查询失败就全局封锁；每个引擎独立记冷却，
-    全部引擎都在冷却时才快速失败（不 sleep），从而避免拖垮整次运行。
+    如果全部引擎都在冷却中，会等到最早恢复的那个（最多 ENGINE_DOWN_SEC 秒）
+    再重试一轮，避免"一次失败导致整次运行后半段全废"。
     """
     global _engine_idx
     engines = _engines()
-    now = time.monotonic()
     last_err: Exception | None = None
-    for i in range(len(engines)):
-        idx = (_engine_idx + i) % len(engines)
-        name, tpl, parser = engines[idx]
-        if _engine_down.get(name, 0) > now:
-            continue
-        try:
-            time.sleep(1.2)  # 轻量间隔，避免瞬时连打
-            res = parser(http_get(tpl.format(q=quote(q))))
-            res = [r for r in res if not _is_junk_url(r["url"])]
-            if _looks_degraded(res, q):
-                _engine_down[name] = time.monotonic() + ENGINE_DOWN_SEC
-                last_err = RuntimeError(f"{name} 返回降级结果")
+    for attempt in range(2):
+        now = time.monotonic()
+        for i in range(len(engines)):
+            idx = (_engine_idx + i) % len(engines)
+            name, tpl, parser = engines[idx]
+            if _engine_down.get(name, 0) > now:
                 continue
-            _engine_idx = (idx + 1) % len(engines)  # 成功的引擎下次优先换下一个
-            return res[:count]
-        except Exception as e:  # noqa: BLE001
-            _engine_down[name] = time.monotonic() + ENGINE_DOWN_SEC
-            last_err = e
+            try:
+                time.sleep(QUERY_GAP_SEC if i == 0 else 1.2)
+                res = parser(http_get(tpl.format(q=quote(q))))
+                res = [r for r in res if not _is_junk_url(r["url"])]
+                if _looks_degraded(res, q):
+                    _engine_down[name] = time.monotonic() + ENGINE_DOWN_SEC
+                    last_err = RuntimeError(f"{name} 返回降级结果")
+                    continue
+                _engine_idx = (idx + 1) % len(engines)  # 成功的引擎下次优先换下一个
+                return res[:count]
+            except Exception as e:  # noqa: BLE001
+                _engine_down[name] = time.monotonic() + ENGINE_DOWN_SEC
+                last_err = e
+        # 全部引擎不可用：等最早恢复的那个再试一次
+        if attempt == 0 and retry_wait:
+            recovery = min((_engine_down.get(n, 0) for n, _, _ in engines), default=0)
+            wait = recovery - time.monotonic()
+            if 0 < wait <= ENGINE_DOWN_SEC:
+                time.sleep(wait + 1)
+                continue
+        break
     raise RuntimeError(f"所有搜索引擎均不可用或被降级（最后错误: {last_err}）")
 
 
