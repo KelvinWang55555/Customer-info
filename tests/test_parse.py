@@ -78,6 +78,14 @@ def main():
     assert not _looks_degraded(relevant, "上海 临港 产业规划"), "相关结果不应误判为降级"
     assert _looks_degraded([], "任意查询"), "空结果应判为降级"
 
+    # 6. 信号板块相关性判定：标题不含"展会"但查询词高度相关的应保留
+    from app.collectors.industry_signals import _relevant
+
+    assert _relevant("上海国际工业自动化展览会开幕", ["展会"], "上海 工业自动化 展会"), \
+        "含关键词应命中"
+    assert not _relevant("上海美食节开幕", ["展会", "博览会"], "上海 工业自动化 展会"), \
+        "无关内容应被过滤"
+
     # 5. 报告生成（含招标板块与评级展示）
     report = build_report(
         [{"source": "s", "title": "测试公告" * 2, "url": "https://a.com", "date": "2026-11-10"}],

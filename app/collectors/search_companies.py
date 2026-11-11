@@ -144,6 +144,8 @@ _engine_idx = 0
 _engine_down: dict[str, float] = {}  # 引擎名 -> 冷却截止时间（monotonic 秒）
 ENGINE_DOWN_SEC = 45   # 单引擎失败后的冷却时长（要短于整次运行，否则后半段全被跳过）
 QUERY_GAP_SEC = 3.5    # 查询间隔，降低触发反爬概率
+_fail_streak = 0       # 连续失败次数：连续多次全引擎失败后停止等待重试（熔断）
+FAIL_STREAK_LIMIT = 2
 
 
 def _engines() -> tuple:
@@ -159,7 +161,7 @@ def web_search(q: str, count: int = 12, retry_wait: bool = True) -> list[dict]:
     如果全部引擎都在冷却中，会等到最早恢复的那个（最多 ENGINE_DOWN_SEC 秒）
     再重试一轮，避免"一次失败导致整次运行后半段全废"。
     """
-    global _engine_idx
+    global _engine_idx, _fail_streak
     engines = _engines()
     last_err: Exception | None = None
     for attempt in range(2):
@@ -178,18 +180,20 @@ def web_search(q: str, count: int = 12, retry_wait: bool = True) -> list[dict]:
                     last_err = RuntimeError(f"{name} 返回降级结果")
                     continue
                 _engine_idx = (idx + 1) % len(engines)  # 成功的引擎下次优先换下一个
+                _fail_streak = 0
                 return res[:count]
             except Exception as e:  # noqa: BLE001
                 _engine_down[name] = time.monotonic() + ENGINE_DOWN_SEC
                 last_err = e
-        # 全部引擎不可用：等最早恢复的那个再试一次
-        if attempt == 0 and retry_wait:
+        # 全部引擎不可用：等最早恢复的那个再试一次（连续失败过多则熔断，不再空等）
+        if attempt == 0 and retry_wait and _fail_streak < FAIL_STREAK_LIMIT:
             recovery = min((_engine_down.get(n, 0) for n, _, _ in engines), default=0)
             wait = recovery - time.monotonic()
             if 0 < wait <= ENGINE_DOWN_SEC:
                 time.sleep(wait + 1)
                 continue
         break
+    _fail_streak += 1
     raise RuntimeError(f"所有搜索引擎均不可用或被降级（最后错误: {last_err}）")
 
 

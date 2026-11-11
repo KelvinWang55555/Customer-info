@@ -20,11 +20,24 @@
 单板块失败不中断，健康状态如实上报。
 """
 from ..util import extract_date, match_any
-from .search_companies import NEGATIVE_WORDS, web_search
+from .search_companies import NEGATIVE_WORDS, _query_grams, web_search
+
+# 单条结果与查询词的 2-gram 覆盖率下限（查询词已编码板块意图，足够相关就收）
+QUERY_RELEVANCE_MIN = 0.34
+
+
+def _relevant(text: str, keywords: list[str], q: str) -> bool:
+    """关键词命中，或与查询词足够相关（避免因标题不含"展会"等字样被误杀）"""
+    if keywords and match_any(text, keywords):
+        return True
+    grams = _query_grams(q)
+    if not grams:
+        return False
+    return sum(1 for g in grams if g in text) / len(grams) >= QUERY_RELEVANCE_MIN
 
 
 def _collect_category(cat: dict) -> tuple[list[dict], str]:
-    """采集单个板块：逐查询词搜索 -> 关键词过滤"""
+    """采集单个板块：逐查询词搜索 -> 相关性过滤"""
     keywords = cat.get("filter_keywords", [])
     exclude = cat.get("exclude_keywords", [])
     items: list[dict] = []
@@ -38,7 +51,7 @@ def _collect_category(cat: dict) -> tuple[list[dict], str]:
         n0 = len(items)
         for it in got:
             text = it["title"] + " " + it.get("snippet", "")
-            if not match_any(text, keywords):
+            if not _relevant(text, keywords, q):
                 continue
             if any(n in text for n in NEGATIVE_WORDS) or any(x in text for x in exclude):
                 continue
