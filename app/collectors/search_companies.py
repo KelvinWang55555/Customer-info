@@ -143,7 +143,7 @@ def _looks_degraded(res: list[dict], q: str = "") -> bool:
 _engine_idx = 0
 _engine_down: dict[str, float] = {}  # 引擎名 -> 冷却截止时间（monotonic 秒）
 ENGINE_DOWN_SEC = 45   # 单引擎失败后的冷却时长（要短于整次运行，否则后半段全被跳过）
-QUERY_GAP_SEC = 3.5    # 查询间隔，降低触发反爬概率
+QUERY_GAP_SEC = 5.0    # 查询间隔，降低触发反爬概率（太密会被搜索引擎限流）
 _fail_streak = 0       # 连续失败次数：连续多次全引擎失败后停止等待重试（熔断）
 FAIL_STREAK_LIMIT = 2
 
