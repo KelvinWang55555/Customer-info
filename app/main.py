@@ -148,8 +148,10 @@ def main() -> int:
     report_path = report_dir / f"{today()}.md"
     report_path.write_text(report, "utf-8")
     print(f"[report] 已生成 {report_path}")
+    news_n = sum(1 for it in new_signals if it.get("category") == "行业动向新闻")
     print(f"[stats] 新增公示 {len(new_projects)} 条，新增公司线索 {len(new_companies)} 条，"
-          f"招标公告 {len(new_tenders)} 条，园区/展会/规划 {len(new_signals)} 条")
+          f"招标公告 {len(new_tenders)} 条，园区/展会/规划 {len(new_signals) - news_n} 条，"
+          f"行业动向新闻 {news_n} 条")
 
     # ---------- 4. 推送 ----------
     has_new = bool(new_projects or new_companies or new_tenders or new_signals)

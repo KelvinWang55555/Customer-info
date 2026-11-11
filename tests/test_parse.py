@@ -86,7 +86,7 @@ def main():
     assert not _relevant("上海美食节开幕", ["展会", "博览会"], "上海 工业自动化 展会"), \
         "无关内容应被过滤"
 
-    # 5. 报告生成（含招标板块与评级展示）
+    # 7. 报告生成（紧凑列表式：概览、招标、评级、行业动向单列）
     report = build_report(
         [{"source": "s", "title": "测试公告" * 2, "url": "https://a.com", "date": "2026-11-10"}],
         [{"source": "s", "title": "测试公司", "url": "https://b.com", "snippet": "摘要",
@@ -94,10 +94,13 @@ def main():
         [{"source": "s", "ok": True, "note": "ok"}],
         [{"title": "XX单位自动化设备采购项目招标公告", "url": "https://c.com",
           "date": "2026-11-11", "region": "上海", "source": "政府采购网"}],
+        [{"title": "上海自动化产业融资新动态", "url": "https://d.com", "date": "2026-11-11",
+          "category": "行业动向新闻", "snippet": "某机器人企业完成融资"}],
     )
-    assert "**测试公告" not in report  # markdown 中链接格式正确
-    assert "招标公告" in report and "上海" in report
-    assert "A·高相关" in report and "命中" in report
+    assert "今日概览" in report and "行业动向新闻（1）" in report
+    assert "- [测试公告测试公告](https://a.com)" in report  # 紧凑单行列表项
+    assert "招标公告（1）" in report and "上海" in report
+    assert "🟢A" in report and "命中" in report
 
     # 6. 推送渠道：未配置任何 Secret 时给出明确提示；配置 Server酱 时走对应分支
     ok, msg = push_report(report)

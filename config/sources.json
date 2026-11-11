@@ -194,12 +194,44 @@
           "产业政策"
         ],
         "exclude_keywords": []
+      },
+      {
+        "name": "行业动向新闻",
+        "queries": [
+          "上海 自动化 智能制造 行业动态 新闻",
+          "工业自动化 市场 趋势 2026",
+          "机器人 产业 融资 投资 新动态",
+          "智能制造 企业 扩产 签约 上海",
+          "自动化 行业 企业新增 落户 上海"
+        ],
+        "filter_keywords": [
+          "动态",
+          "动向",
+          "趋势",
+          "融资",
+          "投资",
+          "扩产",
+          "签约",
+          "落户",
+          "新工厂",
+          "新基地",
+          "市场",
+          "发布"
+        ],
+        "exclude_keywords": [
+          "招聘",
+          "招聘信息",
+          "求职",
+          "培训",
+          "课程",
+          "广告"
+        ]
       }
     ]
   },
   "report": {
     "push_empty": true,
-    "max_push_chars": 3800,
+    "max_push_chars": 6000,
     "report_dir": "reports",
     "resolve_redirects": 60,
     "rotate_stage_order": true
