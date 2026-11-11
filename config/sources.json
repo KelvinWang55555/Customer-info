@@ -201,6 +201,7 @@
     "push_empty": true,
     "max_push_chars": 3800,
     "report_dir": "reports",
-    "resolve_redirects": 60
+    "resolve_redirects": 60,
+    "rotate_stage_order": true
   }
 }

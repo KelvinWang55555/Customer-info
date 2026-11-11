@@ -53,20 +53,45 @@ def main() -> int:
     cfg = json.loads(CONFIG_FILE.read_text("utf-8"))
 
     # ---------- 1. 采集 ----------
+    # 搜索引擎有累积限流效应：越靠后的板块越容易拿不到结果。
+    # 因此按日期轮换三个搜索类板块的采集顺序，让每个板块公平分享"引擎新鲜期"。
     projects, health = collect_gov_notices(
         cfg.get("gov_notices", []), cfg.get("automation_keywords", []))
     search_cfg = cfg.get("search_companies", {})
-    companies, health2 = collect_new_companies(search_cfg)
-    companies2, health3 = collect_qcc(cfg.get("qcc_api", {}))
-    companies.extend(companies2)
-    health.extend(health2)
-    health.extend(health3)
-    companies = apply_scoring(companies, search_cfg)
 
-    tenders, health4 = collect_tenders(cfg.get("tenders", {}))
-    health.extend(health4)
-    signals, health5 = collect_signals(cfg.get("signals", {}))
-    health.extend(health5)
+    def _companies() -> tuple[list[dict], list[dict]]:
+        items, hh = collect_new_companies(search_cfg)
+        extra, h2 = collect_qcc(cfg.get("qcc_api", {}))
+        items.extend(extra)
+        return apply_scoring(items, search_cfg), hh + h2
+
+    def _tenders() -> tuple[list[dict], list[dict]]:
+        return collect_tenders(cfg.get("tenders", {}))
+
+    def _signals() -> tuple[list[dict], list[dict]]:
+        return collect_signals(cfg.get("signals", {}))
+
+    stages = [("companies", _companies), ("tenders", _tenders), ("signals", _signals)]
+    rotate = 0
+    if cfg.get("report", {}).get("rotate_stage_order", True):
+        from datetime import date
+
+        rotate = date.today().toordinal() % len(stages)
+    stages = stages[rotate:] + stages[:rotate]
+    print(f"[order] 采集顺序: {' → '.join(name for name, _ in stages)}")
+
+    companies: list[dict] = []
+    tenders: list[dict] = []
+    signals: list[dict] = []
+    for name, fn in stages:
+        items, hh = fn()
+        health.extend(hh)
+        if name == "companies":
+            companies = items
+        elif name == "tenders":
+            tenders = items
+        else:
+            signals = items
 
     # ---------- 2. 去重 ----------
     # 同一 URL 可能出现在多个栏目，先全局去重
