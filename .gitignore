@@ -1,3 +1,6 @@
 __pycache__/
 *.pyc
 .venv/
+logs*
+logs_tmp/
+push_via_api.py

@@ -1,0 +1,83 @@
+"""产业园区动态 / 展会会议沙龙 / 区域政府规划 —— 通用搜索聚合采集器
+
+这类信息没有统一官方接口，采用 Bing 搜索聚合：每个板块配置一组查询词，
+结果按板块关键词过滤，并打上 category 标签供日报分板块展示。
+
+配置（config/sources.json -> signals）：
+{
+  "enabled": true,
+  "categories": [
+    {
+      "name": "产业园区动态",
+      "queries": ["上海 工业园区 开园", ...],
+      "filter_keywords": ["园区", "产业园", ...],
+      "exclude_keywords": ["出租", "厂房转租"]
+    },
+    ...
+  ]
+}
+
+单板块失败不中断，健康状态如实上报。
+"""
+from ..util import extract_date, match_any
+from .search_companies import NEGATIVE_WORDS, web_search
+
+
+def _collect_category(cat: dict) -> tuple[list[dict], str]:
+    """采集单个板块：逐查询词搜索 -> 关键词过滤"""
+    keywords = cat.get("filter_keywords", [])
+    exclude = cat.get("exclude_keywords", [])
+    items: list[dict] = []
+    errors: list[str] = []
+    for q in cat.get("queries", []):
+        try:
+            got = web_search(q)
+        except Exception as e:  # noqa: BLE001
+            errors.append(f"{type(e).__name__}")
+            continue
+        n0 = len(items)
+        for it in got:
+            text = it["title"] + " " + it.get("snippet", "")
+            if not match_any(text, keywords):
+                continue
+            if any(n in text for n in NEGATIVE_WORDS) or any(x in text for x in exclude):
+                continue
+            it["source"] = f"{cat.get('name', '?')}·搜索"
+            it["date"] = extract_date(it["url"], it.get("snippet", ""))
+            items.append(it)
+        if len(items) == n0:
+            errors.append("0条")
+    note = f"{len(cat.get('queries', []))}个查询, 命中{len(items)}条"
+    if not items and errors and all(e == "0条" for e in errors):
+        pass  # 查询都成功但无命中，属正常
+    return items, note
+
+
+def collect_signals(cfg: dict) -> tuple[list[dict], list[dict]]:
+    """采集园区/展会/规划信息。返回 (条目, 健康状态)。条目含 category 字段。"""
+    if not cfg.get("enabled", True):
+        return [], [{"source": "signals", "ok": False, "note": "已禁用"}]
+
+    all_items: list[dict] = []
+    health: list[dict] = []
+    seen_urls = set()
+
+    for cat in cfg.get("categories", []):
+        name = cat.get("name", "?")
+        try:
+            items, note = _collect_category(cat)
+            kept = 0
+            for it in items:
+                if it["url"] in seen_urls:
+                    continue
+                seen_urls.add(it["url"])
+                it["category"] = name
+                all_items.append(it)
+                kept += 1
+            health.append({"source": f"信号·{name}", "ok": True,
+                           "note": f"{note}，保留{kept}条"})
+        except Exception as e:  # noqa: BLE001
+            health.append({"source": f"信号·{name}", "ok": False,
+                           "note": f"{type(e).__name__}: {e}"})
+
+    return all_items, health
