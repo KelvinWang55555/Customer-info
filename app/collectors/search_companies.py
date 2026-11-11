@@ -146,6 +146,15 @@ ENGINE_DOWN_SEC = 45   # 单引擎失败后的冷却时长（要短于整次运�
 QUERY_GAP_SEC = 5.0    # 查询间隔，降低触发反爬概率（太密会被搜索引擎限流）
 _fail_streak = 0       # 连续失败次数：连续多次全引擎失败后停止等待重试（熔断）
 FAIL_STREAK_LIMIT = 2
+SEARCH_BUDGET_SEC = 480  # 全部搜索类采集的总时间预算（防止坏网络下拖超 Actions 超时）
+_budget_start: float | None = None
+
+
+def _budget_left() -> float:
+    global _budget_start
+    if _budget_start is None:
+        _budget_start = time.monotonic()
+    return SEARCH_BUDGET_SEC - (time.monotonic() - _budget_start)
 
 
 def _engines() -> tuple:
@@ -162,6 +171,8 @@ def web_search(q: str, count: int = 12, retry_wait: bool = True) -> list[dict]:
     再重试一轮，避免"一次失败导致整次运行后半段全废"。
     """
     global _engine_idx, _fail_streak
+    if _budget_left() <= 0:
+        raise RuntimeError(f"搜索总预算 {SEARCH_BUDGET_SEC}s 已用完，跳过本次查询")
     engines = _engines()
     last_err: Exception | None = None
     for attempt in range(2):
@@ -173,7 +184,7 @@ def web_search(q: str, count: int = 12, retry_wait: bool = True) -> list[dict]:
                 continue
             try:
                 time.sleep(QUERY_GAP_SEC if i == 0 else 1.2)
-                res = parser(http_get(tpl.format(q=quote(q))))
+                res = parser(http_get(tpl.format(q=quote(q)), timeout=12))
                 res = [r for r in res if not _is_junk_url(r["url"])]
                 if _looks_degraded(res, q):
                     _engine_down[name] = time.monotonic() + ENGINE_DOWN_SEC
