@@ -104,6 +104,15 @@ def main() -> int:
 
     message = report if has_new else (
         f"# 上海自动化产业日报 {today()}\n\n今日无新增命中，数据源状态见仓库报告。")
+
+    # 诊断：显示各渠道环境变量是否被 workflow 注入（只显示有无，不显示内容）
+    import os
+    diag = []
+    for name in ("SERVERCHAN_SENDKEY", "PUSHPLUS_TOKEN", "WECOM_WEBHOOK"):
+        v = os.environ.get(name, "")
+        diag.append(f"{name}={'已注入(长度%d)' % len(v) if v else '未注入'}")
+    print("[push] 渠道诊断: " + ", ".join(diag))
+
     ok, msg = push_report(
         message, max_chars=cfg.get("report", {}).get("max_push_chars", 3800))
     print(f"[push] {'成功' if ok else '失败'}: {msg}")
