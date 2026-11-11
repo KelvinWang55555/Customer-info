@@ -11,8 +11,10 @@ import sys
 from pathlib import Path
 
 from .collectors.gov_notices import collect_gov_notices
+from .collectors.industry_signals import collect_signals
 from .collectors.qcc_api import collect_qcc
-from .collectors.search_companies import collect_new_companies
+from .collectors.search_companies import apply_scoring, collect_new_companies
+from .collectors.tenders import collect_tenders
 from .push_wecom import push_report
 from .report import build_report
 from .util import today
@@ -59,6 +61,12 @@ def main() -> int:
     companies.extend(companies2)
     health.extend(health2)
     health.extend(health3)
+    companies = apply_scoring(companies, search_cfg)
+
+    tenders, health4 = collect_tenders(cfg.get("tenders", {}))
+    health.extend(health4)
+    signals, health5 = collect_signals(cfg.get("signals", {}))
+    health.extend(health5)
 
     # ---------- 2. 去重 ----------
     # 同一 URL 可能出现在多个栏目，先全局去重
@@ -73,26 +81,30 @@ def main() -> int:
         return out
 
     projects, companies = dedupe(projects), dedupe(companies)
+    tenders, signals = dedupe(tenders), dedupe(signals)
     seen = load_state()
     new_projects = [it for it in projects if key_of(it) not in seen]
     new_companies = [it for it in companies if key_of(it) not in seen]
+    new_tenders = [it for it in tenders if key_of(it) not in seen]
+    new_signals = [it for it in signals if key_of(it) not in seen]
 
     if not args.dry_run:
-        for it in projects + companies:
+        for it in projects + companies + tenders + signals:
             seen.add(key_of(it))
         save_state(seen)
 
     # ---------- 3. 生成报告 ----------
-    report = build_report(new_projects, new_companies, health)
+    report = build_report(new_projects, new_companies, health, new_tenders, new_signals)
     report_dir = ROOT / cfg.get("report", {}).get("report_dir", "reports")
     report_dir.mkdir(parents=True, exist_ok=True)
     report_path = report_dir / f"{today()}.md"
     report_path.write_text(report, "utf-8")
     print(f"[report] 已生成 {report_path}")
-    print(f"[stats] 新增公示 {len(new_projects)} 条，新增公司线索 {len(new_companies)} 条")
+    print(f"[stats] 新增公示 {len(new_projects)} 条，新增公司线索 {len(new_companies)} 条，"
+          f"招标公告 {len(new_tenders)} 条，园区/展会/规划 {len(new_signals)} 条")
 
     # ---------- 4. 推送 ----------
-    has_new = bool(new_projects or new_companies)
+    has_new = bool(new_projects or new_companies or new_tenders or new_signals)
     if args.dry_run:
         print("[push] dry-run 模式，跳过推送")
         return 0
@@ -104,15 +116,6 @@ def main() -> int:
 
     message = report if has_new else (
         f"# 上海自动化产业日报 {today()}\n\n今日无新增命中，数据源状态见仓库报告。")
-
-    # 诊断：显示各渠道环境变量是否被 workflow 注入（只显示有无，不显示内容）
-    import os
-    diag = []
-    for name in ("SERVERCHAN_SENDKEY", "PUSHPLUS_TOKEN", "WECOM_WEBHOOK"):
-        v = os.environ.get(name, "")
-        diag.append(f"{name}={'已注入(长度%d)' % len(v) if v else '未注入'}")
-    print("[push] 渠道诊断: " + ", ".join(diag))
-
     ok, msg = push_report(
         message, max_chars=cfg.get("report", {}).get("max_push_chars", 3800))
     print(f"[push] {'成功' if ok else '失败'}: {msg}")

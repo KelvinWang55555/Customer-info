@@ -50,15 +50,37 @@ def main():
     # 3. 日期提取兜底
     assert extract_date("https://x.com/p/", "发布于 2026年11月3日") == "2026-11-03"
 
-    # 4. 报告生成
+    # 4. 公司评分引擎
+    from app.collectors.company_scorer import score_company
+    from app.collectors.search_companies import apply_scoring
+
+    strong = score_company({"title": "上海XX自动化设备有限公司",
+                            "snippet": "经营范围：工业机器人、PLC 控制系统、伺服驱动、传感器研发"})
+    assert strong and strong["grade"] == "A", f"高相关应评 A: {strong}"
+    weak = score_company({"title": "上海XX餐饮管理有限公司", "snippet": "餐饮服务管理"})
+    assert weak is None, f"无关公司应被丢弃: {weak}"
+    mid = score_company({"title": "上海XX机电工程有限公司", "snippet": "电气安装 系统集成"})
+    assert mid and mid["grade"] in ("B", "C"), f"邻近行业评分异常: {mid}"
+    scored = apply_scoring(
+        [{"title": "甲自动化设备", "snippet": "PLC 变频器", "url": "u1"},
+         {"title": "乙餐饮管理", "snippet": "餐饮", "url": "u2"}],
+        {"scorer": {"enrich": False}})
+    assert [s["title"] for s in scored] == ["甲自动化设备"], "评分过滤/排序异常"
+
+    # 5. 报告生成（含招标板块与评级展示）
     report = build_report(
         [{"source": "s", "title": "测试公告" * 2, "url": "https://a.com", "date": "2026-11-10"}],
-        [{"source": "s", "title": "测试公司", "url": "https://b.com", "snippet": "摘要"}],
+        [{"source": "s", "title": "测试公司", "url": "https://b.com", "snippet": "摘要",
+          "score": 9, "grade": "A", "matched": ["PLC"]}],
         [{"source": "s", "ok": True, "note": "ok"}],
+        [{"title": "XX单位自动化设备采购项目招标公告", "url": "https://c.com",
+          "date": "2026-11-11", "region": "上海", "source": "政府采购网"}],
     )
     assert "**测试公告" not in report  # markdown 中链接格式正确
+    assert "招标公告" in report and "上海" in report
+    assert "A·高相关" in report and "命中" in report
 
-    # 5. 推送渠道：未配置任何 Secret 时给出明确提示；配置 Server酱 时走对应分支
+    # 6. 推送渠道：未配置任何 Secret 时给出明确提示；配置 Server酱 时走对应分支
     ok, msg = push_report(report)
     assert ok is False and "SERVERCHAN_SENDKEY" in msg, f"未配置渠道时的提示异常: {msg}"
 
