@@ -4,3 +4,6 @@ __pycache__/
 logs*
 logs_tmp/
 push_via_api.py
+
+# 本地状态备份
+state/*.bak-*
