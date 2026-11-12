@@ -12,7 +12,12 @@ from pathlib import Path
 
 from .collectors.news import collect_news
 from .collectors.qcc_api import collect_qcc
-from .collectors.search_companies import _is_junk_url, apply_scoring, collect_new_companies
+from .collectors.search_companies import (
+    _is_junk_url,
+    apply_scoring,
+    collect_new_companies,
+    reset_search_budget,
+)
 from .push_wecom import push_report
 from .report import build_report
 from .util import resolve_redirect, today
@@ -67,8 +72,9 @@ def main() -> int:
     news, health = collect_news(
         cfg.get("news", {}), cfg.get("gov_notices", []), cfg.get("automation_keywords", []))
 
-    # ---------- 2. 采集：新注册企业 ----------
+    # ---------- 2. 采集：新注册企业（重置搜索预算：两个板块各自独立计时） ----------
     print("[stage] 采集新注册企业 ...")
+    reset_search_budget()
     search_cfg = cfg.get("search_companies", {})
     raw_companies, comp_health = collect_new_companies(search_cfg)
     qcc_items, qcc_health = collect_qcc(cfg.get("qcc_api", {}))

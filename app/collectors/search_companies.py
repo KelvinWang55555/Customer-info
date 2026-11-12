@@ -189,6 +189,13 @@ def _budget_left() -> float:
     return SEARCH_BUDGET_SEC - (time.monotonic() - _budget_start)
 
 
+def reset_search_budget() -> None:
+    """重置搜索时间预算（每个采集板块开始前调用，避免前一个板块耗光预算导致后面全部秒失败）。"""
+    global _budget_start, _fail_streak
+    _budget_start = time.monotonic()
+    _fail_streak = 0
+
+
 def _engines() -> tuple:
     return (("sogou", SO_GOU_URL, _parse_sogou),
             ("so360", SO_360_URL, _parse_360),
