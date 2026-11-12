@@ -125,6 +125,47 @@ def match_any(title: str, keywords: list[str]) -> bool:
     return any(k.lower() in t for k in keywords)
 
 
+# 文章页里的发布/更新日期（meta、JSON-LD、正文首个日期）
+_PAGE_DATE_PATTERNS = (
+    re.compile(r'(?:publishdate|pubdate|publish_time|article:published_time|'
+               r'datepublished|release_date|"pubtime")[^0-9]{0,30}'
+               r'(\d{4})[-/.年](\d{1,2})[-/.月](\d{1,2})', re.I),
+    re.compile(r'(\d{4})[-/.年](\d{1,2})[-/.月](\d{1,2})'),
+)
+
+
+def fetch_publish_date(url: str, timeout: int = 8) -> str:
+    """抓文章页并提取发布日期，返回 YYYY-MM-DD 或空串（失败返回空，不抛异常）。
+
+    用途：搜索结果只有标题、没有日期时，用它判断是否为旧闻。
+    """
+    if not url.startswith(("http://", "https://")):
+        return ""
+    m = DATE_IN_URL.search(url)  # 先看 URL 自身是否带日期（最快）
+    if m:
+        try:
+            datetime(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+            return f"{m.group(1)}-{m.group(2)}-{m.group(3)}"
+        except ValueError:
+            pass
+    try:
+        text = http_get(url, timeout=timeout)
+    except Exception:  # noqa: BLE001 反爬/超时都当"拿不到"
+        return ""
+    head = text[:120000]
+    for pat in _PAGE_DATE_PATTERNS:
+        for mm in pat.finditer(head):
+            y, mo, d = int(mm.group(1)), int(mm.group(2)), int(mm.group(3))
+            if not (2010 <= y <= datetime.now().year + 1):
+                continue
+            try:
+                dt = datetime(y, mo, d)
+            except ValueError:
+                continue
+            return dt.strftime("%Y-%m-%d")
+    return ""
+
+
 def today() -> str:
     return datetime.now().strftime("%Y-%m-%d")
 

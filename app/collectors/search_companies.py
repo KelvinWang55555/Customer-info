@@ -4,7 +4,7 @@ import re
 import time
 from urllib.parse import quote
 
-from ..util import http_get, match_any, strip_tags
+from ..util import extract_date, http_get, match_any, strip_tags
 from .company_scorer import enrich_scope, score_company
 
 BING_URL = "https://www.bing.com/search?q={q}&setlang=zh-CN&count=20"
@@ -16,7 +16,9 @@ NEGATIVE_WORDS = ("招聘", "求职", "试题", "培训广告", "下载", "课�
                   "旅游攻略", "旅游景点", "自由行", "百度百科", "酒店",
                   # 查询回显页 / 教程文档，不是企业实体
                   "怎样注册", "注册流程", "注册材料", "注册条件", "360地图",
-                  "短视频", "文档")
+                  "注册公司", "需要哪些材料", "办理流程", "流程介绍",
+                  "操作指南", "进一步探索",
+                  "最新相关消息", "相关消息", "短视频", "文档")
 
 # Bing 结果块: <li class="b_algo"><h2><a href="...">标题</a></h2> ... <p>摘要</p>
 RESULT_RE = re.compile(
@@ -32,23 +34,40 @@ _SOGOU_SNIPPET_RE = re.compile(r'<(?:p|div)[^>]*class="[^"]*(?:fz-mid|text-layou
 _JUNK_HINTS = ("百度百科", "旅游攻略", "Tripadvisor", "上海市人民政府",
                "旅游景点", "自由行", "旅行指南")
 
-# 明显无业务价值的域名：文档分享站、短视频聚合、百科问答
+# 明显无业务价值的域名：文档分享站、短视频聚合、百科问答、搜索自身聚合页
 JUNK_DOMAINS = ("tv.360kan.com", "360kan.com", "renrendoc.com", "docin.com",
                 "wenku.baidu.com", "baike.baidu.com", "zhidao.baidu.com",
                 "douyin.com", "kuaishou.com", "xiaohongshu.com", "zhihu.com/question",
                 "book118.com", "doc88.com", "360doc.com", "mbalib.com",
-                "toutiao.com/topic", "baike.sogou.com")
+                "toutiao.com/topic", "baike.sogou.com",
+                # 搜索引擎自身的结果聚合页（"XX的最新相关消息"）
+                "news.so.com/ns", "so.com/ns?", "jobui.com/rank",
+                # 企业信息站的"新闻舆情/动态"列表页，不是单条新闻
+                "aiqicha.baidu.com/company_news", "cechina.cn/Company/",
+                # 百科/荣誉榜单页
+                "baike.so.com", "cbi360.net",
+                # 招商/招标聚合、公司注册代办类站点
+                "zhaobiao.cn", "11467.com/info", "chenyangling.com", "71a.com",
+                # 企业产品/留言页、投融资数据聚合页（不是新闻）
+                "messagedetail.aspx", "zdb.pedaily.cn")
 
-# 过时内容：标题里出现多年前份的公告/教程，对新客户线索和产业动态没价值
+# 过时内容：标题里出现早年（含不带"年"的写法，如"2024智能制造大会"）
 _STALE_YEARS = ("2018年", "2019年", "2020年", "2021年", "2022年", "2023年", "2024年")
-# URL 路径里的年份（如 /2024/09/02/），用于判断旧文章
-_STALE_URL_YEAR = re.compile(r"/(201[5-9]|202[0-4])[/_-]")
+_STALE_YEAR_RE = re.compile(r"20(1[5-9]|2[0-5])")
+# URL 路径里的年份（如 /2024/09/02/、/20240311/）
+_STALE_URL_YEAR = re.compile(r"/(201[5-9]|202[0-5])[/_-]?")
+_STALE_URL_COMPACT = re.compile(r"(?:^|[/_.-])20(?:1[5-9]|2[0-5])(?:0[1-9]|1[0-2])")
 
 
 def _is_stale(title: str, url: str = "") -> bool:
+    """判断是否为过时内容（当前年份为 2026，标题/URL 出现 2015-2025 即视为旧闻）"""
     if any(y in title for y in _STALE_YEARS):
         return True
-    return bool(url and _STALE_URL_YEAR.search(url))
+    if _STALE_YEAR_RE.search(title):
+        return True
+    if url and (_STALE_URL_YEAR.search(url) or _STALE_URL_COMPACT.search(url)):
+        return True
+    return False
 
 
 def _is_junk_url(url: str) -> bool:
@@ -223,7 +242,7 @@ def web_search(q: str, count: int = 12, retry_wait: bool = True) -> list[dict]:
 
 
 def collect_new_companies(cfg: dict) -> tuple[list[dict], list[dict]]:
-    """用 Bing 搜索聚合"上海新注册自动化公司"线索。返回 (条目, 健康状态)。
+    """用搜索聚合"上海新注册自动化公司"线索。返回 (条目, 健康状态)。
 
     免费渠道的局限：只能拿到网页里提到的注册信息，覆盖不全。
     配置企查查 API Key 后（qcc_api.py）可获得准确数据。
@@ -234,6 +253,14 @@ def collect_new_companies(cfg: dict) -> tuple[list[dict], list[dict]]:
     items: list[dict] = []
     health: list[dict] = []
     seen_urls = set()
+    entity_words = cfg.get("entity_words", ["公司", "企业", "厂"])
+    exclude_words = cfg.get("exclude_keywords", [])
+    max_age_days = int(cfg.get("max_age_days", 120))
+    cutoff = ""
+    if max_age_days > 0:
+        from datetime import date, timedelta
+
+        cutoff = (date.today() - timedelta(days=max_age_days)).isoformat()
 
     for q in cfg.get("queries", []):
         try:
@@ -241,21 +268,34 @@ def collect_new_companies(cfg: dict) -> tuple[list[dict], list[dict]]:
             filt = cfg.get("filter_keywords", [])
             n_hit = 0
             for it in got:
-                if it["url"] in seen_urls:
+                url = it.get("url") or ""
+                if not url or url in seen_urls or _is_junk_url(url):
                     continue
-                if not match_any(it["title"], filt) and not match_any(it["snippet"], filt):
+                title = it["title"]
+                # 企业线索必须是"公司实体"页面，排除行业新闻/教程
+                if not any(w in title for w in entity_words):
                     continue
-                if any(n in it["title"] + it["snippet"] for n in NEGATIVE_WORDS):
+                if not match_any(title, filt) and not match_any(it.get("snippet", ""), filt):
                     continue
-                seen_urls.add(it["url"])
+                if any(n in title + it.get("snippet", "") for n in NEGATIVE_WORDS):
+                    continue
+                if any(x in title for x in exclude_words):  # 荣誉榜单/年报等非新增线索
+                    continue
+                if _is_stale(title, url):  # 旧闻/旧公告
+                    continue
+                d = extract_date(url, it.get("snippet", ""))
+                if d and cutoff and d < cutoff:  # 超出时效窗口
+                    continue
+                seen_urls.add(url)
+                it["date"] = d
                 it["source"] = f"web-search「{q}」"
                 items.append(it)
                 n_hit += 1
-            health.append({"source": f"web-search「{q}」", "ok": True,
-                           "note": f"搜索结果{len(got)}条，命中{n_hit}条"})
+            health.append({"source": f"搜索「{q[:14]}」", "ok": True,
+                           "note": f"结果{len(got)}条，命中{n_hit}条"})
         except Exception as e:  # noqa: BLE001
-            health.append({"source": f"web-search「{q}」", "ok": False,
-                           "note": f"搜索失败: {type(e).__name__}: {e}"})
+            health.append({"source": f"搜索「{q[:14]}」", "ok": False,
+                           "note": f"搜索失败: {type(e).__name__}"})
 
     return items, health
 

@@ -86,21 +86,24 @@ def main():
     assert not _relevant("上海美食节开幕", ["展会", "博览会"], "上海 工业自动化 展会"), \
         "无关内容应被过滤"
 
-    # 7. 报告生成（紧凑列表式：概览、招标、评级、行业动向单列）
+    # 7. 报告生成（两板块：新闻分三组 + 新注册企业按等级分组）
     report = build_report(
-        [{"source": "s", "title": "测试公告" * 2, "url": "https://a.com", "date": "2026-11-10"}],
+        [{"title": "上海市智能工厂名单公示", "url": "https://a.com", "date": "2026-11-10",
+          "kind": "政策公示", "source": "公示"},
+         {"title": "上海机器人产业新动态", "url": "https://e.com", "date": "2026-11-11",
+          "kind": "上海动态", "snippet": "某企业发布新品", "source": "新闻搜索"},
+         {"title": "国内工业机器人产量同比增长", "url": "https://f.com", "date": "2026-11-09",
+          "kind": "行业动态", "source": "中国工控网"}],
         [{"source": "s", "title": "测试公司", "url": "https://b.com", "snippet": "摘要",
           "score": 9, "grade": "A", "matched": ["PLC"]}],
         [{"source": "s", "ok": True, "note": "ok"}],
-        [{"title": "XX单位自动化设备采购项目招标公告", "url": "https://c.com",
-          "date": "2026-11-11", "region": "上海", "source": "政府采购网"}],
-        [{"title": "上海自动化产业融资新动态", "url": "https://d.com", "date": "2026-11-11",
-          "category": "行业动向新闻", "snippet": "某机器人企业完成融资"}],
     )
-    assert "今日概览" in report and "行业动向新闻（1）" in report
-    assert "- [测试公告测试公告](https://a.com)" in report  # 紧凑单行列表项
-    assert "招标公告（1）" in report and "上海" in report
-    assert "🟢A" in report and "命中" in report
+    assert "新闻 3 条" in report and "新注册企业 1 家" in report
+    assert "📰 自动化相关新闻（3）" in report
+    assert "📋 政策/公示（1）" in report and "🏙 上海动态（1）" in report
+    assert "📊 行业动态（1）" in report
+    assert "🟢A 核心自动化" in report and "命中:PLC" in report
+    assert "- [上海市智能工厂名单公示](https://a.com)" in report  # 紧凑单行列表项
 
     # 6. 推送渠道：未配置任何 Secret 时给出明确提示；配置 Server酱 时走对应分支
     ok, msg = push_report(report)

@@ -1,4 +1,4 @@
-"""每日汇总主程序
+"""每日汇总主程序（精简版：新闻 + 新注册企业）
 
 用法:
   python -m app.main            # 正常运行（采集 -> 过滤 -> 推送 -> 写报告 -> 更新状态）
@@ -10,11 +10,9 @@ import json
 import sys
 from pathlib import Path
 
-from .collectors.gov_notices import collect_gov_notices
-from .collectors.industry_signals import collect_signals
+from .collectors.news import collect_news
 from .collectors.qcc_api import collect_qcc
-from .collectors.search_companies import apply_scoring, collect_new_companies
-from .collectors.tenders import collect_tenders
+from .collectors.search_companies import _is_junk_url, apply_scoring, collect_new_companies
 from .push_wecom import push_report
 from .report import build_report
 from .util import resolve_redirect, today
@@ -45,129 +43,127 @@ def key_of(item: dict) -> str:
     return item.get("url") or hashlib.md5(item["title"].encode()).hexdigest()
 
 
+def dedupe(items: list[dict]) -> list[dict]:
+    seen, out = set(), []
+    for it in items:
+        k = key_of(it)
+        if k in seen:
+            continue
+        seen.add(k)
+        out.append(it)
+    return out
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--dry-run", action="store_true", help="不推送不更新状态")
     args = parser.parse_args()
 
     cfg = json.loads(CONFIG_FILE.read_text("utf-8"))
+    report_cfg = cfg.get("report", {})
 
-    # ---------- 1. 采集 ----------
-    # 搜索引擎有累积限流效应：越靠后的板块越容易拿不到结果。
-    # 因此按日期轮换三个搜索类板块的采集顺序，让每个板块公平分享"引擎新鲜期"。
-    projects, health = collect_gov_notices(
-        cfg.get("gov_notices", []), cfg.get("automation_keywords", []))
+    # ---------- 1. 采集：新闻（政策公示 + 行业新闻） ----------
+    print("[stage] 采集新闻 ...")
+    news, health = collect_news(
+        cfg.get("news", {}), cfg.get("gov_notices", []), cfg.get("automation_keywords", []))
+
+    # ---------- 2. 采集：新注册企业 ----------
+    print("[stage] 采集新注册企业 ...")
     search_cfg = cfg.get("search_companies", {})
+    raw_companies, comp_health = collect_new_companies(search_cfg)
+    qcc_items, qcc_health = collect_qcc(cfg.get("qcc_api", {}))
+    raw_companies.extend(qcc_items)
+    health.extend(comp_health + qcc_health)
+    companies = apply_scoring(raw_companies, search_cfg)
 
-    def _companies() -> tuple[list[dict], list[dict]]:
-        items, hh = collect_new_companies(search_cfg)
-        extra, h2 = collect_qcc(cfg.get("qcc_api", {}))
-        items.extend(extra)
-        return apply_scoring(items, search_cfg), hh + h2
-
-    def _tenders() -> tuple[list[dict], list[dict]]:
-        return collect_tenders(cfg.get("tenders", {}))
-
-    def _signals() -> tuple[list[dict], list[dict]]:
-        return collect_signals(cfg.get("signals", {}))
-
-    stages = [("companies", _companies), ("tenders", _tenders), ("signals", _signals)]
-    rotate = 0
-    if cfg.get("report", {}).get("rotate_stage_order", True):
-        from datetime import date
-
-        rotate = date.today().toordinal() % len(stages)
-    stages = stages[rotate:] + stages[:rotate]
-    print(f"[order] 采集顺序: {' → '.join(name for name, _ in stages)}")
-
-    companies: list[dict] = []
-    tenders: list[dict] = []
-    signals: list[dict] = []
-    for name, fn in stages:
-        items, hh = fn()
-        health.extend(hh)
-        if name == "companies":
-            companies = items
-        elif name == "tenders":
-            tenders = items
-        else:
-            signals = items
-
-    # ---------- 2. 去重 ----------
-    # 同一 URL 可能出现在多个栏目，先全局去重
-    def dedupe(items: list[dict]) -> list[dict]:
-        seen_urls, out = set(), []
-        for it in items:
-            k = key_of(it)
-            if k in seen_urls:
-                continue
-            seen_urls.add(k)
-            out.append(it)
-        return out
-
-    projects, companies = dedupe(projects), dedupe(companies)
-    tenders, signals = dedupe(tenders), dedupe(signals)
+    # ---------- 3. 去重 + 仅保留新增 ----------
+    news, companies = dedupe(news), dedupe(companies)
     seen = load_state()
-    new_projects = [it for it in projects if key_of(it) not in seen]
+    new_news = [it for it in news if key_of(it) not in seen]
     new_companies = [it for it in companies if key_of(it) not in seen]
-    new_tenders = [it for it in tenders if key_of(it) not in seen]
-    new_signals = [it for it in signals if key_of(it) not in seen]
+    print(f"[dedupe] 新闻 {len(news)}→新增{len(new_news)}，企业 {len(companies)}→新增{len(new_companies)}")
 
     if not args.dry_run:
-        for it in projects + companies + tenders + signals:
+        for it in news + companies:
             seen.add(key_of(it))
         save_state(seen)
 
-    # 搜索引擎给的是加密跳转链接，解析成真实地址（只处理入选条目并限量，避免拖慢）
-    budget = int(cfg.get("report", {}).get("resolve_redirects", 60))
-    for it in new_tenders + new_signals + new_companies + new_projects:
+    # ---------- 4. 解析跳转链接（搜索引擎给的是加密跳转） ----------
+    budget = int(report_cfg.get("resolve_redirects", 60))
+    for it in new_news + new_companies:
         if budget <= 0:
             break
         url = it.get("url") or ""
-        if url:
-            resolved = resolve_redirect(url)
-            if resolved != url:
-                it["url"] = resolved
-                budget -= 1
+        if not url:
+            continue
+        resolved = resolve_redirect(url)
+        if resolved != url:
+            it["url"] = resolved
+            budget -= 1
 
-    # 解析后才知道真实域名，这里二次过滤文档站/视频站等无价值来源
-    from .collectors.search_companies import _is_junk_url
+    # ---------- 5. 拿到真实 URL 后的第二批过滤：时效 + 垃圾域名 + 地域 ----------
+    probe = {"left": int(report_cfg.get("probe_publish_date", 28))}
 
-    def drop_junk(items: list[dict]) -> list[dict]:
-        return [it for it in items if not _is_junk_url(it.get("url") or "")]
+    def refine(items: list[dict], max_age_days: int,
+               region: str = "") -> list[dict]:
+        from datetime import date, timedelta
 
-    new_projects = drop_junk(new_projects)
-    new_companies = drop_junk(new_companies)
-    new_tenders = drop_junk(new_tenders)
-    new_signals = drop_junk(new_signals)
+        from .collectors.search_companies import _is_stale
+        from .util import extract_date, fetch_publish_date
 
-    # ---------- 3. 生成报告 ----------
-    report = build_report(new_projects, new_companies, health, new_tenders, new_signals)
-    report_dir = ROOT / cfg.get("report", {}).get("report_dir", "reports")
+        cutoff = (date.today() - timedelta(days=max_age_days)).isoformat()
+        out: list[dict] = []
+        for it in items:
+            url = it.get("url") or ""
+            # 必须是可访问的真实链接（过滤 javascript:; 等提示页）
+            if not url.startswith(("http://", "https://")) or _is_junk_url(url):
+                continue
+            title = it.get("title", "")
+            if _is_stale(title, url):          # 真实 URL 里带早年 → 旧闻
+                continue
+            if not it.get("date"):             # 真实 URL 可能带来日期
+                it["date"] = extract_date(url, it.get("snippet", ""))
+            if not it.get("date") and probe["left"] > 0:
+                # 还没有日期 → 抓文章页取发布日期（限量，避免拖慢）
+                it["date"] = fetch_publish_date(url)
+                probe["left"] -= 1
+            if it.get("date") and it["date"] < cutoff:
+                continue
+            if region and region not in (title + it.get("snippet", "") + url):
+                continue                       # 企业线索必须与上海相关
+            out.append(it)
+        return out
+
+    news_age = int(cfg.get("news", {}).get("max_age_days", 30))
+    comp_age = int(search_cfg.get("max_age_days", 180))
+    n0, c0 = len(new_news), len(new_companies)
+    new_news = refine(new_news, news_age)
+    new_companies = refine(new_companies, comp_age, region="上海")
+    print(f"[filter] 时效/地域过滤：新闻 {n0}→{len(new_news)}，企业 {c0}→{len(new_companies)}")
+    new_news.sort(key=lambda it: it.get("date") or "", reverse=True)
+
+    # ---------- 5. 生成报告 ----------
+    report = build_report(new_news, new_companies, health)
+    report_dir = ROOT / report_cfg.get("report_dir", "reports")
     report_dir.mkdir(parents=True, exist_ok=True)
     report_path = report_dir / f"{today()}.md"
     report_path.write_text(report, "utf-8")
     print(f"[report] 已生成 {report_path}")
-    news_n = sum(1 for it in new_signals if it.get("category") == "行业动向新闻")
-    print(f"[stats] 新增公示 {len(new_projects)} 条，新增公司线索 {len(new_companies)} 条，"
-          f"招标公告 {len(new_tenders)} 条，园区/展会/规划 {len(new_signals) - news_n} 条，"
-          f"行业动向新闻 {news_n} 条")
+    print(f"[stats] 新闻 {len(new_news)} 条，新注册企业 {len(new_companies)} 家")
 
-    # ---------- 4. 推送 ----------
-    has_new = bool(new_projects or new_companies or new_tenders or new_signals)
+    # ---------- 6. 推送 ----------
     if args.dry_run:
         print("[push] dry-run 模式，跳过推送")
         return 0
 
-    push_empty = cfg.get("report", {}).get("push_empty", True)
-    if not has_new and not push_empty:
+    has_new = bool(new_news or new_companies)
+    if not has_new and not report_cfg.get("push_empty", True):
         print("[push] 今日无新增，按配置跳过推送")
         return 0
 
     message = report if has_new else (
-        f"# 上海自动化产业日报 {today()}\n\n今日无新增命中，数据源状态见仓库报告。")
-    ok, msg = push_report(
-        message, max_chars=cfg.get("report", {}).get("max_push_chars", 3800))
+        f"# 上海自动化日报 {today()}\n\n今日无新增（新闻与企业线索均为 0）。")
+    ok, msg = push_report(message, max_chars=report_cfg.get("max_push_chars", 6000))
     print(f"[push] {'成功' if ok else '失败'}: {msg}")
     return 0 if ok else 1
 
