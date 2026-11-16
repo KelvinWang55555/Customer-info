@@ -163,11 +163,13 @@
   },
   "qcc_api": {
     "enabled": true,
-    "_说明": "企查查官方 API：配置 GitHub Secrets QCC_API_KEY / QCC_SECRET_KEY 后，可获取精确的工商注册信息（成立日期、注册资本、经营范围）",
-    "area": "上海",
-    "keywords": "自动化",
-    "search_type": "searchWide",
-    "days": 7
+    "_说明": "企查查开放平台官方 API（openapi.qcc.com 注册拿 Key，配 GitHub Secrets QCC_API_KEY/QCC_SECRET_KEY 即生效）。若购买的接口名不同，改 search_api/detail_api 即可",
+    "reg_days": 7,
+    "search_api": "APIFuzzySearch",
+    "search_key": "上海 自动化",
+    "page_size": 20,
+    "detail_api": "APIGetBasicInfoById",
+    "detail_top": 10
   },
   "report": {
     "push_empty": true,
