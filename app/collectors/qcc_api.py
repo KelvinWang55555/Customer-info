@@ -23,10 +23,7 @@ import time
 import urllib.parse
 import urllib.request
 
-BASE = "https://api.qcc.com"
-TOKEN_PATH = "/OpenInterface/GetToken"
-
-_token_cache: tuple[float, str] = (0.0, "")  # (过期时间戳, token)
+BASE = "https://api.qichacha.com"   # 官方文档接口域名（openapi.qcc.com 各接口文档标注）
 
 
 def _txt(v) -> str:
@@ -42,29 +39,17 @@ def _norm_date(s: str) -> str:
     return f"{m.group(1)}-{int(m.group(2)):02d}-{int(m.group(3)):02d}" if m else str(s or "")[:10]
 
 
-def _get_token(key: str, secret: str, timeout: int = 20) -> str:
-    global _token_cache
-    now = time.time()
-    if _token_cache[1] and now < _token_cache[0]:
-        return _token_cache[1]
-    url = f"{BASE}{TOKEN_PATH}?" + urllib.parse.urlencode({"key": key, "seckey": secret})
-    req = urllib.request.Request(url)
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        data = json.loads(resp.read().decode("utf-8", errors="replace"))
-    token = _txt(data.get("Token")) or _txt((data.get("Result") or {}).get("Token"))
-    if not token:
-        raise RuntimeError(f"获取 Token 失败: {data}")
-    _token_cache = (now + 20 * 60, token)  # 官方 Token 有效期约 30 分钟，留余量
-    return token
-
-
-def _call(api: str, params: dict, key: str, secret: str, token: str,
+def _call(api: str, params: dict, key: str, secret: str,
           timeout: int = 25) -> dict:
-    ts = str(int(time.time() * 1000))
-    sign = hashlib.md5(f"{token}{ts}{secret}".encode()).hexdigest().upper()
+    """官方文档标准鉴权（openapi.qcc.com 各接口页标注）：
+       Token   = MD5(key + Timespan + SecretKey) 的 32 位大写
+       Timespan= 精确到秒的 Unix 时间戳
+    """
+    ts = str(int(time.time()))          # 秒级时间戳（文档要求）
+    token = hashlib.md5(f"{key}{ts}{secret}".encode()).hexdigest().upper()
     url = f"{BASE}/{api}?" + urllib.parse.urlencode({"key": key, **params})
     req = urllib.request.Request(url, headers={
-        "Token": token, "Timespan": ts, "Sign": sign,
+        "Token": token, "Timespan": ts,
         "User-Agent": "sh-automation-daily/1.0",
     })
     with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -138,23 +123,24 @@ def collect_qcc(cfg: dict) -> tuple[list[dict], list[dict]]:
     cutoff = (_dt.date.today() - _dt.timedelta(days=reg_days)).isoformat()
     health: list[dict] = []
 
-    try:
-        token = _get_token(key, secret)
-    except Exception as e:  # noqa: BLE001
-        return [], [{"source": "qcc-api", "ok": False,
-                     "note": f"Token 获取失败: {type(e).__name__}: {e}"}]
-
     # 1) 模糊搜索：上海新注册的自动化相关企业
-    search_api = cfg.get("search_api", "APIFuzzySearch")
+    #    官方 FuzzySearch/GetList 每次最多返回 5 条，多页补足
+    search_api = cfg.get("search_api", "FuzzySearch/GetList")
+    pages = max(1, int(cfg.get("search_pages", 4)))  # 4页≈20条，消耗4次配额
+    items: list[dict] = []
     try:
-        data = _call(search_api, {
-            "searchKey": cfg.get("search_key", "上海 自动化"),
-            "pageSize": int(cfg.get("page_size", 20)),
-            "pageIndex": 1,
-        }, key, secret, token)
-        items = _collect_from_search(data)
+        for p in range(1, pages + 1):
+            data = _call(search_api, {
+                "searchKey": cfg.get("search_key", "上海 自动化"),
+                "pageIndex": p,
+            }, key, secret)
+            got = _collect_from_search(data)
+            items.extend(got)
+            if len(got) < 5:      # 没满页说明到底了
+                break
+            time.sleep(0.4)
         health.append({"source": f"qcc-api·{search_api}", "ok": True,
-                       "note": f"返回{len(items)}条（配额消耗1次）"})
+                       "note": f"返回{len(items)}条"})
     except Exception as e:  # noqa: BLE001
         return [], [{"source": f"qcc-api·{search_api}", "ok": False,
                      "note": f"搜索失败: {type(e).__name__}: {e}"}]
@@ -174,7 +160,7 @@ def collect_qcc(cfg: dict) -> tuple[list[dict], list[dict]]:
             try:
                 d = _collect_from_detail(_call(
                     detail_api, {"id": it["key_no"], "keyNo": it["key_no"],
-                                 "unique": it["key_no"]}, key, secret, token))
+                                 "unique": it["key_no"]}, key, secret))
             except Exception:
                 continue  # 接口未购买/参数不符时静默降级，列表仍可用
             for k, v in d.items():
