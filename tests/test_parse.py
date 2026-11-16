@@ -86,7 +86,7 @@ def main():
     assert not _relevant("上海美食节开幕", ["展会", "博览会"], "上海 工业自动化 展会"), \
         "无关内容应被过滤"
 
-    # 7. 报告生成（两板块：新闻分三组 + 新注册企业按等级分组）
+    # 7. 报告生成（两板块：新闻分三组 + 新注册企业逐家列表）
     report = build_report(
         [{"title": "上海市智能工厂名单公示", "url": "https://a.com", "date": "2026-11-10",
           "kind": "政策公示", "source": "公示"},
@@ -94,16 +94,35 @@ def main():
           "kind": "上海动态", "snippet": "某企业发布新品", "source": "新闻搜索"},
          {"title": "国内工业机器人产量同比增长", "url": "https://f.com", "date": "2026-11-09",
           "kind": "行业动态", "source": "中国工控网"}],
-        [{"source": "s", "title": "测试公司", "url": "https://b.com", "snippet": "摘要",
-          "score": 9, "grade": "A", "matched": ["PLC"]}],
+        [{"source": "爱企查", "title": "上海测试自动化科技有限公司", "url": "https://b.com",
+          "snippet": "上海市 浦东", "date": "2026-11-10", "reg_cap": "100万人民币",
+          "legal": "张三", "score": 9, "grade": "A", "matched": ["PLC"]}],
         [{"source": "s", "ok": True, "note": "ok"}],
     )
     assert "新闻 3 条" in report and "新注册企业 1 家" in report
     assert "📰 自动化相关新闻（3）" in report
     assert "📋 政策/公示（1）" in report and "🏙 上海动态（1）" in report
     assert "📊 行业动态（1）" in report
-    assert "🟢A 核心自动化" in report and "命中:PLC" in report
-    assert "- [上海市智能工厂名单公示](https://a.com)" in report  # 紧凑单行列表项
+    # 企业列表：公司名即链接 + 次行工商信息
+    assert "🏢 上海新注册企业（1）" in report
+    assert "- [上海测试自动化科技有限公司](https://b.com)" in report
+    assert "注册 11-10" in report and "资本 100万人民币" in report and "法人 张三" in report
+    assert "🟢A·9分" in report and "命中:PLC" in report
+
+    # 8. qcc_free 归一化逻辑（离线构造爱企查返回结构）
+    from app.collectors.qcc_free import _norm_date, _txt, _extract_list
+
+    assert _norm_date("2026年11月5日") == "2026-11-05"
+    assert _norm_date("2026-11-05") == "2026-11-05"
+    assert _txt({"text": "100万人民币"}) == "100万人民币"
+    assert _txt(["机器人", {"name": "自动化"}]) == "机器人 自动化"
+    sample = {"status": 200, "data": {"total": 1, "result": [
+        {"pid": "abc123", "name": "上海XX智能装备有限公司",
+         "startDate": {"text": "2026年11月10日"}, "regCap": {"text": "500万元"},
+         "legalPerson": {"text": "李四"}, "provinceName": "上海市",
+         "industrys": {"text": "通用设备制造业"}}]}}
+    lst = _extract_list(sample)
+    assert len(lst) == 1 and lst[0]["name"].startswith("上海XX"), "列表抽取失败"
 
     # 6. 推送渠道：未配置任何 Secret 时给出明确提示；配置 Server酱 时走对应分支
     ok, msg = push_report(report)

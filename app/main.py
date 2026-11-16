@@ -12,6 +12,7 @@ from pathlib import Path
 
 from .collectors.news import collect_news
 from .collectors.qcc_api import collect_qcc
+from .collectors.qcc_free import collect_qcc_free, enrich_registry, is_registry_page
 from .collectors.search_companies import (
     _is_junk_url,
     apply_scoring,
@@ -72,14 +73,20 @@ def main() -> int:
     news, health = collect_news(
         cfg.get("news", {}), cfg.get("gov_notices", []), cfg.get("automation_keywords", []))
 
-    # ---------- 2. 采集：新注册企业（重置搜索预算：两个板块各自独立计时） ----------
+    # ---------- 2. 采集：新注册企业 ----------
+    # 来源优先级：①爱企查/企查查工商数据直连 ②企查查官方 API ③搜索聚合兜底
     print("[stage] 采集新注册企业 ...")
-    reset_search_budget()
     search_cfg = cfg.get("search_companies", {})
-    raw_companies, comp_health = collect_new_companies(search_cfg)
+    raw_companies, reg_health = collect_qcc_free(cfg.get("qcc_free", {}))
     qcc_items, qcc_health = collect_qcc(cfg.get("qcc_api", {}))
     raw_companies.extend(qcc_items)
-    health.extend(comp_health + qcc_health)
+    health.extend(reg_health + qcc_health)
+    if not raw_companies and search_cfg.get("fallback_enabled", True):
+        # 工商直连全部失败（风控/登录墙）→ 搜索聚合兜底
+        reset_search_budget()
+        fb_items, fb_health = collect_new_companies(search_cfg)
+        raw_companies.extend(fb_items)
+        health.extend(fb_health)
     companies = apply_scoring(raw_companies, search_cfg)
 
     # ---------- 3. 去重 + 仅保留新增 ----------
@@ -146,7 +153,14 @@ def main() -> int:
     new_news = refine(new_news, news_age)
     new_companies = refine(new_companies, comp_age, region="上海")
     print(f"[filter] 时效/地域过滤：新闻 {n0}→{len(new_news)}，企业 {c0}→{len(new_companies)}")
+    # 企业列表纯化：只保留工商详情页（企查查/爱企查/天眼查公司页），剔除纯新闻页；
+    # 再尽力从详情页补抓 注册资本/成立日期/法人
+    n1 = len(new_companies)
+    new_companies = [it for it in new_companies if is_registry_page(it.get("url") or "")]
+    enrich_registry(new_companies, probe_budget=int(report_cfg.get("probe_registry", 15)))
+    print(f"[registry] 企业列表纯化 {n1}→{len(new_companies)}，工商字段已尽力补抓")
     new_news.sort(key=lambda it: it.get("date") or "", reverse=True)
+    new_companies.sort(key=lambda it: it.get("date") or "", reverse=True)
 
     # ---------- 5. 生成报告 ----------
     report = build_report(new_news, new_companies, health)

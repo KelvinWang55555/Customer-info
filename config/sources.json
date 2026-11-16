@@ -102,7 +102,8 @@
   },
   "search_companies": {
     "enabled": true,
-    "_说明": "新注册企业线索：搜索聚合 + 多维评分（A核心自动化 / B系统集成 / C邻近行业）；max_age_days 限定时效，entity_words 确保结果为公司实体",
+    "_说明": "搜索聚合兜底：仅当爱企查/企查查直连全部被风控时启用；fallback_enabled=false 可彻底关闭",
+    "fallback_enabled": true,
     "max_age_days": 180,
     "entity_words": [
       "公司",
@@ -143,6 +144,20 @@
       "enrich": true,
       "enrich_top": 6
     }
+  },
+  "qcc_free": {
+    "enabled": true,
+    "_说明": "新注册企业工商数据直连：爱企查（百度旗下，与企查查同源工商数据）→ 企查查网页兜底；reg_days=只列出最近 N 天注册的企业",
+    "reg_days": 7,
+    "pages": 2,
+    "queries": [
+      "上海 自动化",
+      "上海 智能装备",
+      "上海 机器人 科技",
+      "上海 机电 设备",
+      "上海 仪器仪表",
+      "上海 智能科技"
+    ]
   },
   "qcc_api": {
     "enabled": true,

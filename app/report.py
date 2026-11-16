@@ -4,7 +4,6 @@
 """
 from .util import today
 
-GRADE_LABEL = {"A": "🟢A 核心自动化", "B": "🟡B 系统集成/工程", "C": "⚪C 邻近行业"}
 NEWS_GROUPS = (("政策公示", "📋 政策/公示"), ("上海动态", "🏙 上海动态"), ("行业动态", "📊 行业动态"))
 
 
@@ -50,36 +49,36 @@ def build_report(news: list[dict], companies: list[dict], health: list[dict],
         lines.append("- 今日暂无新增（政府与媒体栏目页通常稳定，搜索引擎限流时搜索补充会缺失）")
         lines.append("")
 
-    # ---------- 二、新注册企业线索 ----------
-    lines.append(f"## 🏢 新注册企业线索（{len(companies)}）")
+    # ---------- 二、新注册企业（列表呈现：逐家公司一行名 + 一行工商信息） ----------
+    lines.append(f"## 🏢 上海新注册企业（{len(companies)}）")
     if companies:
-        groups: dict[str, list[dict]] = {}
-        for it in companies:
-            groups.setdefault(it.get("grade", "C"), []).append(it)
-        for grade in ("A", "B", "C"):
-            items = groups.get(grade, [])
-            if not items:
-                continue
-            lines.append(f"**{GRADE_LABEL.get(grade, grade)}（{len(items)}）**")
-            for it in items[:company_limit]:
-                meta = []
-                if it.get("score"):
-                    meta.append(f"{it['score']}分")
-                if it.get("matched"):
-                    meta.append("命中:" + "、".join(it["matched"][:3]))
-                if it.get("date"):
-                    meta.append(_date_short(it["date"]))
-                line = f"- **{_short(it['title'], 26)}**"
-                if it.get("url"):
-                    line += f" [🔍]({it['url']})"
-                if meta:
-                    line += " · " + " · ".join(meta)
-                lines.append(line)
-            lines.append("")
-        lines.append("> 评分依据公司名、简介与经营范围关键词加权；"
-                     "配置企查查 API 后可基于工商登记信息精确判断")
+        for it in companies[:company_limit]:
+            name = _short(it["title"], 30)
+            head = f"- [{name}]({it['url']})" if it.get("url") else f"- **{name}**"
+            lines.append(head)
+            meta = []
+            d = _date_short(it.get("date", ""))
+            if d:
+                meta.append(f"注册 {d}")
+            if it.get("reg_cap"):
+                meta.append(f"资本 {_short(it['reg_cap'], 14)}")
+            if it.get("legal"):
+                meta.append(f"法人 {_short(it['legal'], 8)}")
+            grade = it.get("grade")
+            if grade:
+                badge = {"A": "🟢", "B": "🟡", "C": "⚪"}.get(grade, "")
+                meta.append(f"{badge}{grade}·{it.get('score', 0)}分")
+            if it.get("matched"):
+                meta.append("命中:" + "、".join(it["matched"][:3]))
+            elif it.get("scope"):
+                meta.append(f"经营:{_short(it['scope'], 12)}")
+            if meta:
+                lines.append("  " + " · ".join(meta))
+        lines.append("")
+        lines.append("> 工商信息来自爱企查/企查查（直连），🟢A 核心自动化 · 🟡B 系统集成 · ⚪C 邻近行业；"
+                     "搜索兜底来源可能缺注册资本等字段")
     else:
-        lines.append("- 今日暂无新增线索")
+        lines.append("- 今日暂无新增（工商直连被风控且搜索兜底无结果）")
     lines.append("")
 
     # ---------- 数据源 ----------
