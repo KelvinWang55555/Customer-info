@@ -123,6 +123,13 @@ def main():
          "industrys": {"text": "通用设备制造业"}}]}}
     lst = _extract_list(sample)
     assert len(lst) == 1 and lst[0]["name"].startswith("上海XX"), "列表抽取失败"
+    # 从搜索摘要里抽工商字段（前端零成本补齐）
+    from app.collectors.qcc_free import _parse_fields
+    f = _parse_fields("威玛（上海）自动化科技有限公司 注册资本：500万人民币 成立日期：2026-11-10 "
+                      "法定代表人：王五")
+    assert f.get("reg_cap", "").startswith("500万"), f"注册资本抽取失败: {f}"
+    assert f.get("date") == "2026-11-10", f"成立日期抽取失败: {f}"
+    assert f.get("legal") == "王五", f"法人抽取失败: {f}"
 
     # 6. 推送渠道：未配置任何 Secret 时给出明确提示；配置 Server酱 时走对应分支
     ok, msg = push_report(report)

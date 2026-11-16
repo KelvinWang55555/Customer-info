@@ -213,33 +213,48 @@ _RE_EST = re.compile(r"(?:成立日期|成立于|注册日期)[^0-9]{0,20}(20\d{
 _RE_LEGAL = re.compile(r"法定代表人[^一-龥]{0,24}([一-龥·]{2,5})")
 
 
+def _parse_fields(text: str) -> dict:
+    """从文本（搜索摘要或详情页 HTML）里抽取 注册资本/成立日期/法人"""
+    out: dict = {}
+    m = _RE_EST.search(text or "")
+    if m:
+        d = _norm_date(m.group(1))
+        if d:
+            out["date"] = d
+    m = _RE_CAP.search(text or "")
+    if m:
+        out["reg_cap"] = m.group(1).strip()
+    m = _RE_LEGAL.search(text or "")
+    if m:
+        out["legal"] = m.group(1).strip()
+    return out
+
+
 def enrich_registry(items: list[dict], probe_budget: int = 15) -> None:
-    """对工商详情页尽力抓取 注册资本/成立日期/法定代表人（页面是 JS 壳或要求登录时静默跳过）。"""
+    """补齐工商字段：先解析搜索结果摘要（零成本），再对详情页尽力抓取。"""
     from ..util import http_get
 
     for it in items:
+        # 1) 摘要里通常就有"注册资本 100万人民币 成立日期 2026-11-10"
+        for k, v in _parse_fields(it.get("snippet", "")).items():
+            if not it.get(k):
+                it[k] = v
         if probe_budget <= 0:
-            break
+            continue
         url = it.get("url") or ""
         if not url.startswith(("http://", "https://")):
+            continue
+        # 2) 需要补的字段还缺 → 抓详情页（JS 壳/登录墙时静默跳过）
+        if it.get("date") and it.get("reg_cap") and it.get("legal"):
             continue
         probe_budget -= 1
         try:
             html = http_get(url, timeout=12)
         except Exception:
             continue
-        if it.get("date") == "" or not it.get("date"):
-            m = _RE_EST.search(html)
-            if m:
-                it["date"] = _norm_date(m.group(1))
-        if not it.get("reg_cap"):
-            m = _RE_CAP.search(html)
-            if m:
-                it["reg_cap"] = m.group(1).strip()
-        if not it.get("legal"):
-            m = _RE_LEGAL.search(html)
-            if m:
-                it["legal"] = m.group(1).strip()
+        for k, v in _parse_fields(html).items():
+            if not it.get(k):
+                it[k] = v
 
 
 def collect_qcc_free(cfg: dict) -> tuple[list[dict], list[dict]]:
